@@ -3,7 +3,7 @@ import { h, toast, loading, errorBox, confirmBox, modal, closeModal } from '../u
 import { requestPanel, newId } from './requests.js';
 import { makeDraggable, moveInArray } from '../drag.js';
 import { loadRegistry, updateRegistry } from '../assets.js';
-import { portraitLayer } from '../portrait.js';
+import { portraitLayer, loadDialogueLayout, layoutStage } from '../portrait.js';
 
 const FILE = 'data/story/prologue.json';
 const CHARS = 'data/characters.json';
@@ -21,7 +21,7 @@ const REPEAT = { none: '다시 말 걸면 반복 없음', tail: '끝부분 반�
 let S = null;
 
 async function load(ctx) {
-  const [st, ch, reg] = await Promise.all([ctx.store.getJSON(FILE), ctx.store.getJSON(CHARS, { characters: [] }), loadRegistry(ctx.store).catch(() => [])]);
+  const [st, ch, reg] = await Promise.all([ctx.store.getJSON(FILE), ctx.store.getJSON(CHARS, { characters: [] }), loadRegistry(ctx.store).catch(() => []), loadDialogueLayout(ctx.store)]);
   if (!st.data) throw new Error('스토리 데이터(data/story/prologue.json)가 없어요.');
   S = { story: st.data, sha: st.sha, chars: ch.data, assets: reg, dirty: new Set(), flowDirty: false, checked: new Set(), openGroups: new Set(), store: ctx.store };
 }
@@ -34,6 +34,7 @@ function speakers() {
   return [...S.chars.characters.map(c => ({ id: c.id, name: c.displayName || c.name })), ...(S.chars.extraSpeakers || [])];
 }
 const charOf = id => S.chars.characters.find(c => c.id === id);
+const firstSpeaker = () => S?.chars?.characters?.[0]?.id || 'system';
 const speakerName = st => st.name || speakers().find(s => s.id === st.speaker)?.name || st.speaker;
 const emotionLabel = e => S.chars.emotions?.[e] || e;
 
@@ -228,7 +229,7 @@ function addScene(ctx, { after, group }) {
 }
 
 async function addGroup(ctx, after) {
-  const name = h('input', { placeholder: '예) 신전 의논 이후 · 마을 대화' });
+  const name = h('input', { placeholder: '예) 사건 뒤 · 마을 대화' });
   const ok = await modal('새 NPC 대화 묶음', h('label', { class: 'field' }, h('span', {}, '묶음 이름 (언제의 대화인지)'), name), [{ label: '취소', value: false }, { label: '만들기', value: true, primary: true }]);
   if (!ok || !name.value.trim()) return;
   const idx = S.story.flow.findIndex(f => f.id === after || f.members?.includes(after));
@@ -284,7 +285,7 @@ function sceneEditor(ctx, id) {
         h('label', { class: 'field' }, h('span', {}, '상태'), statusSel),
         h('label', { class: 'field' }, h('span', {}, '종류'), catSel),
         h('label', { class: 'field' }, h('span', {}, '장소'), input('location')),
-        s.category === 'npc' && h('label', { class: 'field' }, h('span', {}, '대화 대상 (NPC 키)'), input('npc', { placeholder: '예) mirette, resident_03' })),
+        s.category === 'npc' && h('label', { class: 'field' }, h('span', {}, '대화 대상 (NPC 키)'), input('npc', { placeholder: '예) 인물 id 또는 resident_03' })),
         h('label', { class: 'field wide' }, h('span', {}, '연출 메모 (게임에 나오지 않는 설명)'), input('note', { tag: 'textarea', rows: 2 }))),
       conditionsInfo(s)),
     h('div', { class: 'card' },
@@ -319,7 +320,7 @@ function stepRow(ctx, s, steps, st, i, redraw, change) {
     h('button', { title: '위로', onclick: () => { if (i > 0) { [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]]; change(); redraw(); } } }, '↑'),
     h('button', { title: '아래로', onclick: () => { if (i < steps.length - 1) { [steps[i + 1], steps[i]] = [steps[i], steps[i + 1]]; change(); redraw(); } } }, '↓'),
     h('button', { title: '복제', onclick: () => { steps.splice(i + 1, 0, { ...structuredClone(st), id: uid('L') }); change(); redraw(); } }, '⧉'),
-    h('button', { title: '아래에 대사 추가', onclick: () => { steps.splice(i + 1, 0, newLine(st.kind === 'line' ? st.speaker : 'pyle')); change(); redraw(); } }, '+'),
+    h('button', { title: '아래에 대사 추가', onclick: () => { steps.splice(i + 1, 0, newLine(st.kind === 'line' ? st.speaker : firstSpeaker())); change(); redraw(); } }, '+'),
     h('button', { title: '삭제', class: 'del', onclick: () => { steps.splice(i, 1); change(); redraw(); } }, '✕'));
 
   let body;
@@ -376,12 +377,12 @@ function stepRow(ctx, s, steps, st, i, redraw, change) {
   return row;
 }
 
-function newLine(speaker = 'pyle') { return { id: uid('L'), kind: 'line', speaker, emotion: 'normal', text: '' }; }
+function newLine(speaker = firstSpeaker()) { return { id: uid('L'), kind: 'line', speaker, emotion: 'normal', text: '' }; }
 
 function addButtons(steps, redraw, change) {
   const add = st => { steps.push(st); change(); redraw(); };
   return h('div', { class: 'row', style: { marginTop: '10px' } },
-    h('button', { class: 'btn small', onclick: () => add(newLine(steps.filter(x => x.kind === 'line').at(-2)?.speaker || 'pyle')) }, '+ 대사'),
+    h('button', { class: 'btn small', onclick: () => add(newLine(steps.filter(x => x.kind === 'line').at(-2)?.speaker || firstSpeaker())) }, '+ 대사'),
     h('button', { class: 'btn small', onclick: () => add({ id: uid('D'), kind: 'direction', text: '' }) }, '+ 연출'),
     h('button', { class: 'btn small', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'set_flag', args: {} }) }, '+ 명령'),
     h('button', { class: 'btn small', title: '이벤트 일러스트를 띄워요. 추가한 뒤 어떤 그림인지 고르세요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'show_cg', args: { key: '', duration: 0.9 } }) }, '+ 🖼 일러스트'),
@@ -446,7 +447,7 @@ function repeatEditor(ctx, s, change) {
 }
 
 async function askReview(ctx, s) {
-  const what = h('textarea', { rows: 3, placeholder: '예) 미레트 말투가 더 명랑했으면 좋겠어 / 맞춤법만 봐줘 (비워 두면 전체 검토)' });
+  const what = h('textarea', { rows: 3, placeholder: '예) 이 인물 말투가 더 명랑했으면 좋겠어 / 맞춤법만 봐줘 (비워 두면 전체 검토)' });
   const ok = await modal(`"${s.title}" 검토 요청`, h('label', { class: 'field' }, h('span', {}, '무엇을 봐 줄까요?'), what), [{ label: '취소', value: false }, { label: '요청 남기기', value: true, primary: true }]);
   if (!ok) return;
   const now = new Date().toISOString();
@@ -494,8 +495,8 @@ function cgPicker(ctx, st, change, redraw) {
     h('option', { value: '__new' }, '+ 새 일러스트 칸 만들기'));
   keySel.onchange = async () => {
     if (keySel.value === '__new') {
-      const title = h('input', { placeholder: '예) 신전의 꺼진 대동력석' });
-      const key = h('input', { placeholder: '영어 id (예: temple_dead_stone)' });
+      const title = h('input', { placeholder: '예) 비 오는 밤의 다리' });
+      const key = h('input', { placeholder: '영어 id (예: rainy_bridge)' });
       const ok = await modal('새 일러스트 칸', h('div', {}, h('label', { class: 'field' }, h('span', {}, '이름'), title), h('label', { class: 'field' }, h('span', {}, 'id (Codex가 그림을 등록할 때 이 id를 씀)'), key)),
         [{ label: '취소', value: false }, { label: '만들기', value: true, primary: true }]);
       const k = (key.value.trim() || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_');
@@ -601,6 +602,7 @@ async function preview(s) {
     } else {
       box = h('div', { class: 'pv-box dir' }, h('div', { class: 'pv-text' }, `[${OPS[st.op] || st.op}] ${Object.values(st.args || {}).join(' ')}`));
     }
+    requestAnimationFrame(() => layoutStage(stage));
     stage.replaceChildren(...[scene, box, layer].filter(Boolean),
       h('div', { class: 'pv-bar' }, h('span', {}, `${i} / ${steps.length}`), h('span', { class: 'spacer' }),
         h('button', { class: 'btn small', onclick: e => { e.stopPropagation(); i = Math.max(0, i - 2); next(); } }, '◀ 이전'),

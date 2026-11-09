@@ -4,12 +4,14 @@ import { requestPanel } from './requests.js';
 
 const FILE = 'data/system/classes.json';
 const LEVELS = ['1', '15', '30', '60'];
-const CHAR_NAMES = { pyle: '파일', mirette: '미레트', fenel: '페넬' };
+// character names come from the game data (data/characters.json), never from this public code
+let CHAR_NAMES = {};
 let D = null, sha = null, dirty = false, storeRef = null;
 
 async function load(ctx) {
-  const r = await ctx.store.getJSON(FILE);
+  const [r, ch] = await Promise.all([ctx.store.getJSON(FILE), ctx.store.getJSON('data/characters.json', { characters: [] }).catch(() => ({ data: { characters: [] } }))]);
   if (!r.data) throw new Error('시스템 데이터(data/system/classes.json)가 없어요.');
+  CHAR_NAMES = Object.fromEntries((ch.data?.characters || []).map(c => [c.id, c.displayName || c.name]));
   D = r.data; sha = r.sha; dirty = false; storeRef = ctx.store;
 }
 const cls = id => D.classes.find(c => c.id === id);

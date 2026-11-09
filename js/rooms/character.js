@@ -1,6 +1,6 @@
 // Character room: people (portraits by expression), the image library with approval, and bulk upload.
 import { h, toast, modal, confirmBox, closeModal } from '../ui.js';
-import { portraitLayer, frameFor } from '../portrait.js';
+import { portraitLayer, frameFor, loadDialogueLayout, layoutStage } from '../portrait.js';
 import { requestPanel } from './requests.js';
 import {
   KINDS, STATUSES, statusClass, CHARS, loadRegistry, updateRegistry, uploadAssets, uploadSources, findDuplicates, thumb, spritePlayer, viewImage,
@@ -73,7 +73,10 @@ function mockStage(ctx, c, emotion, name, text = '대사창에서는 이 크기�
   const stage = h('div', { class: 'pv-stage mock' },
     h('div', { class: 'pv-box' }, h('div', { class: 'pv-name' }, name || c.displayName || c.name), h('div', { class: 'pv-text' }, text)));
   const file = c.portraits?.[emotion];
-  if (file) ctx.store.blobUrl(file).then(u => { const layer = portraitLayer(u, c, emotion); stage.append(layer); stage._layer = layer; });
+  loadDialogueLayout(ctx.store).then(() => {
+    requestAnimationFrame(() => layoutStage(stage));
+    if (file) ctx.store.blobUrl(file).then(u => { const layer = portraitLayer(u, c, emotion); stage.append(layer); stage._layer = layer; });
+  });
   return stage;
 }
 

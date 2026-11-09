@@ -13,6 +13,62 @@ export const LAYOUT = {
   textGap: 0.018,     // space between the portrait and the text
 };
 
+// Dialogue settings shared with the game (data/ui.json → dialogue). Pixel values are in the
+// game's 1280×720 screen and get scaled to the preview stage.
+export const DEFAULT_DIALOGUE = {
+  box: { left: 0.03, bottom: 0.10, height: 0.28 },
+  portrait: { faceX: 0.135, chinY: 0.73, eyeToChin: 0.078 },
+  name: { x: 0, y: 0, size: 21 },
+  text: { x: 0, y: 0, size: 22 },
+  noPortraitPad: 66,
+};
+export let DIALOGUE = structuredClone(DEFAULT_DIALOGUE);
+
+export function applyDialogue(cfg = {}) {
+  const d = structuredClone(DEFAULT_DIALOGUE);
+  for (const k of Object.keys(d)) if (cfg[k] !== undefined) d[k] = typeof d[k] === 'object' ? { ...d[k], ...cfg[k] } : cfg[k];
+  DIALOGUE = d;
+  Object.assign(LAYOUT, { boxLeft: d.box.left, boxBottom: d.box.bottom, boxHeight: d.box.height, faceX: d.portrait.faceX, chinY: d.portrait.chinY, eyeToChin: d.portrait.eyeToChin });
+  return d;
+}
+
+const loaded = new WeakMap();
+let FRAME = null; // { url, margin } — the game's dialogue frame picture (data/ui.json → dialogueFrame)
+// Reads data/ui.json once per store and applies its dialogue settings.
+export async function loadDialogueLayout(store) {
+  if (!loaded.has(store)) loaded.set(store, store.getJSON('data/ui.json', {}).then(async r => {
+    const ui = r.data || {};
+    const d = applyDialogue(ui.dialogue || {});
+    FRAME = null;
+    const fr = ui.dialogueFrame;
+    if (fr?.file) { try { FRAME = { url: await store.blobUrl(fr.file), margin: fr.margin || [60, 56, 60, 56] }; } catch { FRAME = null; } }
+    return d;
+  }).catch(() => applyDialogue({})));
+  return loaded.get(store);
+}
+export function forgetDialogueLayout(store) { loaded.delete(store); }
+
+// Box size/position and name/text style on a .pv-stage (with or without a portrait).
+export function layoutStage(stage, padPx = null) {
+  const box = stage?.querySelector('.pv-box');
+  if (!box) return;
+  const W = stage.clientWidth, H = stage.clientHeight, k = W / 1280, d = DIALOGUE;
+  Object.assign(box.style, { left: `${d.box.left * 100}%`, right: `${d.box.left * 100}%`, bottom: `${d.box.bottom * 100}%`, height: `${d.box.height * 100}%` });
+  if (box.classList.contains('noportrait') && padPx == null) box.style.paddingLeft = `${Math.round(d.noPortraitPad * k)}px`;
+  if (FRAME) {
+    // same 9-slice frame as the game, drawn by a child so the text padding stays measured from the box edge
+    let fr = box.querySelector(':scope > .pv-frame');
+    if (!fr) { fr = document.createElement('div'); fr.className = 'pv-frame'; box.prepend(fr); }
+    const [ml, mt, mr, mb] = FRAME.margin;
+    Object.assign(fr.style, { borderWidth: `${mt * k}px ${mr * k}px ${mb * k}px ${ml * k}px`, borderImage: `url(${FRAME.url}) ${mt} ${mr} ${mb} ${ml} fill stretch` });
+    box.classList.add('framed');
+    box.style.paddingTop = `${Math.round(20 * k)}px`;
+  }
+  const name = box.querySelector('.pv-name'), text = box.querySelector('.pv-text');
+  if (name) Object.assign(name.style, { fontSize: `${(d.name.size * k).toFixed(1)}px`, transform: `translate(${d.name.x * k}px, ${d.name.y * k}px)` });
+  if (text) Object.assign(text.style, { fontSize: `${(d.text.size * k).toFixed(1)}px`, transform: `translate(${d.text.x * k}px, ${d.text.y * k}px)` });
+}
+
 export function frameFor(char, emotion) {
   const base = { eye: 0.35, chin: 0.5, cx: 0.5, scale: 1, dx: 0, dy: 0, ...(char?.portraitFrame || {}) };
   return { ...base, ...(char?.portraitFrames?.[emotion] || {}) };
@@ -85,6 +141,7 @@ export function portraitLayer(url, char, emotion) {
     const textX = Math.min(L.maxTextX * W, Math.max(L.minTextX * W, reach + L.textGap * W));
     const box = stage.querySelector('.pv-box:not(.dir):not(.noportrait)');
     if (box) box.style.paddingLeft = `${Math.round(textX - L.boxLeft * W)}px`;
+    layoutStage(stage, textX);
 
     // Soft edges only where the picture really ends: past the text limit, and at its own bottom
     // when that bottom stops above the box bottom.

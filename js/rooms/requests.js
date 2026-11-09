@@ -32,7 +32,7 @@ export function requestPanel(ctx, room) {
 
   function form() {
     const roomSel = room ? null : h('select', {}, ROOMS.filter(r => !['home', 'requests'].includes(r.id)).map(r => h('option', { value: r.id }, r.name)));
-    const title = h('input', { placeholder: '예) 미레트 웃는 표정 초상화 새로 만들어줘' });
+    const title = h('input', { placeholder: '예) 주인공 웃는 표정 초상화 새로 만들어줘' });
     const body = h('textarea', { placeholder: '자세한 내용 (선택)' });
     const add = async () => {
       if (!title.value.trim()) return toast('요청 제목을 적어 주세요.', true);

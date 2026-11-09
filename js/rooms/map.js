@@ -299,7 +299,7 @@ async function editView(ctx, id) {
 }
 
 async function newMap(ctx) {
-  const name = h('input', { placeholder: '예) 하젤린 마을' });
+  const name = h('input', { placeholder: '예) 숲속 마을' });
   const id = h('input', { placeholder: '영어 id (예: hazelin)' });
   const cols = h('input', { type: 'number', value: 30, min: 10, max: 120 });
   const rows = h('input', { type: 'number', value: 17, min: 8, max: 120 });
