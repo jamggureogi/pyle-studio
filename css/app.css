@@ -209,3 +209,22 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .upload-fields select,.upload-fields input{border:1px solid var(--line);border-radius:6px;padding:5px 8px;min-width:0}
 .upload-fields input{flex:1}
 .sprite-canvas{image-rendering:auto;max-width:100%;max-height:300px}
+
+/* system room */
+.tree-wrap{display:flex;gap:18px;overflow-x:auto}
+.troot{flex:1;min-width:300px}
+.troot h4{margin:0 0 8px}
+.tnode{display:flex;align-items:center;gap:8px;margin:4px 0}
+.tkids{display:flex;flex-direction:column;border-left:2px solid var(--line);padding-left:8px}
+.tcard{display:inline-flex;flex-direction:column;padding:6px 10px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--ink);background:#fff;min-width:96px}
+.tcard small{color:var(--muted);font-size:11px}
+.tcard.tier1{border-left:4px solid #6aa577}.tcard.tier2{border-left:4px solid #6b8fb8}.tcard.tier3{border-left:4px solid #b88a4f}
+.tcard.on{background:#e7efe8;border-color:#a9c7ae}
+.tbl{border-collapse:collapse;width:100%;font-size:14px;margin:8px 0}
+.tbl th,.tbl td{border:1px solid var(--line);padding:5px 7px;text-align:left}
+.tbl th{background:#f3f0e8;font-weight:600;white-space:nowrap}
+.tbl input{width:100%;border:1px solid transparent;background:transparent;padding:2px 4px;border-radius:4px;min-width:60px}
+.tbl input:focus{border-color:var(--line);background:#fff}
+.tbl input.num{width:70px;min-width:0}
+.tbl select{border:1px solid var(--line);border-radius:4px;padding:2px}
+.chart{width:100%;height:auto;max-height:340px}
