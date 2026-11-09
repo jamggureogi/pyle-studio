@@ -1,6 +1,6 @@
 // Story room: chapters → scenes → lines. Edit speakers, expressions, order, and preview the dialogue box.
 import { h, toast, loading, errorBox, confirmBox, modal } from '../ui.js';
-import { requestPanel } from './requests.js';
+import { requestPanel, newId } from './requests.js';
 
 const FILE = 'data/story/prologue.json';
 const CHARS = 'data/characters.json';
@@ -225,6 +225,7 @@ function sceneEditor(ctx, id) {
         h('span', { class: 'muted', style: { fontSize: '12px' } }, `${CATEGORIES[s.category] || s.category} · id: ${s.id}`),
         h('span', { class: 'spacer' }),
         h('button', { class: 'btn small primary', onclick: () => preview(s) }, '▶ 미리보기'),
+        h('button', { class: 'btn small', onclick: () => askReview(ctx, s) }, '💬 Claude 검토 요청'),
         h('button', { class: 'btn small danger', onclick: del }, '장면 삭제')),
       h('div', { class: 'scene-fields' },
         h('label', { class: 'field wide' }, h('span', {}, '장면 이름'), input('title')),
@@ -395,6 +396,21 @@ function repeatEditor(ctx, s, change) {
   };
   draw();
   return h('div', { class: 'card' }, h('h2', {}, '다시 말 걸었을 때'), box);
+}
+
+async function askReview(ctx, s) {
+  const what = h('textarea', { rows: 3, placeholder: '예) 미레트 말투가 더 명랑했으면 좋겠어 / 맞춤법만 봐줘 (비워 두면 전체 검토)' });
+  const ok = await modal(`"${s.title}" 검토 요청`, h('label', { class: 'field' }, h('span', {}, '무엇을 봐 줄까요?'), what), [{ label: '취소', value: false }, { label: '요청 남기기', value: true, primary: true }]);
+  if (!ok) return;
+  const now = new Date().toISOString();
+  try {
+    await ctx.store.updateJSON('data/requests.json', d => {
+      (d.requests ||= []).unshift({ id: newId(), room: 'story', title: `장면 검토: ${s.title}`, body: `장면 id: ${s.id}\n${what.value.trim() || '대사 흐름, 말투, 맞춤법, 설정과 맞는지 전체 검토'}`, status: '대기', createdAt: now, updatedAt: now, createdBy: '사용자', response: '' });
+      return d;
+    }, `요청 추가: 장면 검토 ${s.title}`, { requests: [] });
+    ctx.refreshBadges();
+    toast('요청을 남겼어요. Claude에게 "요청함 처리해줘"라고 말해 주세요.');
+  } catch (e) { toast(e.message, true); }
 }
 
 // ---------- preview ----------
