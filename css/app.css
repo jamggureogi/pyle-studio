@@ -272,3 +272,11 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .decision textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;resize:vertical}
 .side nav{overflow-x:auto}
 .opt:disabled{color:inherit}
+
+/* drag to reorder */
+.grip{cursor:grab;color:#b5ad9c;font-size:15px;line-height:1;padding:2px 3px;user-select:none;touch-action:none;flex-shrink:0}
+.grip:hover{color:var(--accent)}
+.step>.grip{margin-top:6px}
+.drop-line{position:fixed;height:4px;background:var(--accent);border-radius:2px;z-index:300;pointer-events:none;display:none;box-shadow:0 0 0 2px rgba(79,122,90,.25)}
+.dragging{opacity:.35}
+.drag-ghost{background:#fff;border-radius:8px}

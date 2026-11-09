@@ -1,6 +1,7 @@
 // Story room: chapters → scenes → lines. Edit speakers, expressions, order, and preview the dialogue box.
 import { h, toast, loading, errorBox, confirmBox, modal } from '../ui.js';
 import { requestPanel, newId } from './requests.js';
+import { makeDraggable, moveInArray } from '../drag.js';
 
 const FILE = 'data/story/prologue.json';
 const CHARS = 'data/characters.json';
@@ -99,13 +100,23 @@ function flowTree(ctx, sel) {
   const q = h('input', { class: 'search', placeholder: '대사·장면 검색' });
   const list = h('div', {});
   const counts = Object.values(S.story.scenes).reduce((a, s) => (a[s.status] = (a[s.status] || 0) + 1, a), {});
-  const sceneLink = (id, indent) => {
+  const sceneLink = (id, indent, dropAttrs = {}) => {
     const s = S.story.scenes[id];
     if (!s) return null;
-    return h('a', { href: `#/story/edit/${id}`, class: `${id === sel ? 'on' : ''} ${indent ? 'indent' : ''}` },
+    const a = h('a', { href: `#/story/edit/${id}`, class: `${id === sel ? 'on' : ''} ${indent ? 'indent' : ''}`, ...dropAttrs },
+      h('span', { class: 'grip' }, '⠿'),
       h('span', { class: `dot ${statusClass[s.status] || ''}`, title: s.status }),
       h('span', { class: 'name' }, s.title || id),
       S.dirty.has(id) && h('span', { class: 'muted' }, ' •'));
+    return a;
+  };
+  // Every row says where it lives: a top-level flow slot or a member slot inside a group.
+  const wireDrag = (rowEl, src) => {
+    const grip = rowEl.querySelector('.grip') || rowEl;
+    makeDraggable(grip, rowEl, {
+      accept: t => src.kind === 'flow' && S.story.flow[src.fi].kind === 'group' ? t.dataset.drop === 'flow' : true,
+      onDrop: (t, before) => { moveFlow(src, t.dataset, before); S.flowDirty = true; rerender(ctx, sel); },
+    });
   };
   const draw = () => {
     const term = q.value.trim();
@@ -115,15 +126,30 @@ function flowTree(ctx, sel) {
       return (s.title || '').includes(term) || s.steps.some(st => (st.text || '').includes(term) || (st.name || '').includes(term));
     };
     list.replaceChildren(...S.story.flow.map((f, i) => {
-      if (f.kind === 'scene') return match(f.id) ? h('div', { class: 'flow-item' }, sceneLink(f.id), flowTools(ctx, i)) : null;
+      if (f.kind === 'scene') {
+        if (!match(f.id)) return null;
+        const row = h('div', { class: 'flow-item', 'data-drop': 'flow', 'data-fi': i }, sceneLink(f.id), flowTools(ctx, i));
+        wireDrag(row, { kind: 'flow', fi: i });
+        return row;
+      }
       const members = f.members.filter(match);
       if (term && !members.length) return null;
       const open = term || S.openGroups.has(f.id) || f.members.includes(sel);
-      return h('div', { class: 'flow-item group' },
-        h('div', { class: 'group-head', onclick: () => { S.openGroups.has(f.id) ? S.openGroups.delete(f.id) : S.openGroups.add(f.id); draw(); } },
-          h('span', {}, open ? '▾' : '▸'), h('span', { class: 'name' }, f.title), h('span', { class: 'badge' }, f.members.length), flowTools(ctx, i)),
-        open && h('div', {}, members.map(id => sceneLink(id, true)),
+      const head = h('div', { class: 'group-head', onclick: e => { if (e.target.closest('.grip')) return; S.openGroups.has(f.id) ? S.openGroups.delete(f.id) : S.openGroups.add(f.id); draw(); } },
+        h('span', { class: 'grip' }, '⠿'), h('span', {}, open ? '▾' : '▸'), h('span', { class: 'name' }, f.title), h('span', { class: 'badge' }, f.members.length), flowTools(ctx, i));
+      const box = h('div', { class: 'flow-item group', 'data-drop': 'flow', 'data-fi': i }, head,
+        open && h('div', {}, members.map(id => {
+          const mi = f.members.indexOf(id);
+          const link = sceneLink(id, true, { 'data-drop': 'member', 'data-gid': f.id, 'data-mi': mi });
+          if (link) wireDrag(link, { kind: 'member', gid: f.id, mi });
+          return link;
+        }),
           h('a', { href: '#', class: 'indent add', onclick: e => { e.preventDefault(); addScene(ctx, { group: f }); } }, '+ 이 묶음에 NPC 대화 추가')));
+      makeDraggable(head.querySelector('.grip'), box, {
+        accept: t => t.dataset.drop === 'flow',
+        onDrop: (t, before) => { moveFlow({ kind: 'flow', fi: i }, t.dataset, before); S.flowDirty = true; rerender(ctx, sel); },
+      });
+      return box;
     }));
   };
   q.addEventListener('input', draw);
@@ -134,6 +160,30 @@ function flowTree(ctx, sel) {
     h('div', { class: 'row', style: { marginTop: '10px' } },
       h('button', { class: 'btn small', onclick: () => addScene(ctx, { after: sel }) }, '+ 장면'),
       h('button', { class: 'btn small', onclick: () => addGroup(ctx, sel) }, '+ NPC 묶음')));
+}
+
+// Move a scene/group between top-level flow slots and NPC group member slots.
+function moveFlow(src, dst, before) {
+  const flow = S.story.flow;
+  const groupOf = id => flow.find(f => f.kind === 'group' && f.id === id);
+  // take the item out
+  let item;
+  if (src.kind === 'flow') item = flow[src.fi];
+  else item = { kind: 'scene', id: groupOf(src.gid).members[src.mi] };
+  // remember the target object before indices shift
+  const dstFlowItem = dst.drop === 'flow' ? flow[Number(dst.fi)] : null;
+  const dstGroup = dst.drop === 'member' ? groupOf(dst.gid) : null;
+  const dstMemberId = dstGroup ? dstGroup.members[Number(dst.mi)] : null;
+  if (src.kind === 'flow') flow.splice(src.fi, 1);
+  else groupOf(src.gid).members.splice(src.mi, 1);
+  if (dstGroup) {
+    if (item.kind === 'group') { flow.splice(src.fi, 0, item); return; }
+    const at = dstGroup.members.indexOf(dstMemberId);
+    dstGroup.members.splice(before ? at : at + 1, 0, item.id);
+  } else {
+    const at = flow.indexOf(dstFlowItem);
+    flow.splice(before ? at : at + 1, 0, item);
+  }
 }
 
 function flowTools(ctx, i) {
@@ -255,21 +305,12 @@ function stepList(ctx, s, steps, redraw, change) {
 }
 
 function stepRow(ctx, s, steps, st, i, redraw, change) {
-  const row = h('div', { class: `step ${st.kind} ${S.checked.has(st.id) ? 'checked' : ''}`, draggable: 'true' });
-  // drag to reorder (mouse); buttons work on touch screens
-  row.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', String(i)); row.classList.add('dragging'); });
-  row.addEventListener('dragend', () => row.classList.remove('dragging'));
-  row.addEventListener('dragover', e => { e.preventDefault(); row.classList.add('over'); });
-  row.addEventListener('dragleave', () => row.classList.remove('over'));
-  row.addEventListener('drop', e => {
-    e.preventDefault(); row.classList.remove('over');
-    const from = Number(e.dataTransfer.getData('text/plain'));
-    if (Number.isNaN(from) || from === i) return;
-    const [moved] = steps.splice(from, 1);
-    steps.splice(i, 0, moved);
-    change(); redraw();
+  const row = h('div', { class: `step ${st.kind} ${S.checked.has(st.id) ? 'checked' : ''}`, 'data-drop': 'step', 'data-index': i });
+  const grip = h('span', { class: 'grip' }, '⠿');
+  makeDraggable(grip, row, {
+    accept: t => t.dataset.drop === 'step' && t.parentElement === row.parentElement,
+    onDrop: (t, before) => { moveInArray(steps, i, Number(t.dataset.index), before); change(); redraw(); },
   });
-
   const check = h('input', { type: 'checkbox', checked: S.checked.has(st.id), title: '복사할 대사 선택' });
   check.onchange = () => { check.checked ? S.checked.add(st.id) : S.checked.delete(st.id); row.classList.toggle('checked', check.checked); };
   const tools = h('div', { class: 'step-tools' },
@@ -327,7 +368,7 @@ function stepRow(ctx, s, steps, st, i, redraw, change) {
     };
     body = h('div', { class: 'cmd' }, h('span', { class: 'tag' }, '명령'), opSel, args);
   }
-  row.append(check, body, tools);
+  row.append(grip, check, body, tools);
   return row;
 }
 
