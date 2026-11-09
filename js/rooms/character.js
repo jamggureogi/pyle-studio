@@ -107,11 +107,18 @@ function fitCard(ctx, c, chars) {
         await ctx.store.updateJSON(CHARS, d => {
           const x = d.characters.find(y => y.id === c.id);
           if (!x) return d;
-          if (allEmotions) { x.portraitFrame = cur; delete x.portraitFrames; c.portraitFrame = cur; delete c.portraitFrames; }
+          if (allEmotions) {
+            // Each expression keeps its own face position; only size and nudges are shared.
+            const shared = { scale: cur.scale, dx: cur.dx, dy: cur.dy };
+            for (const t of [x, c]) {
+              t.portraitFrame = { ...(t.portraitFrame || {}), ...shared };
+              for (const k of Object.keys(t.portraitFrames || {})) Object.assign(t.portraitFrames[k], shared);
+            }
+          }
           else { (x.portraitFrames ||= {})[emo] = cur; }
           return d;
         }, `대화창 초상화 맞춤: ${c.name} ${allEmotions ? '전체' : emo}`);
-        toast(allEmotions ? '모든 표정에 같은 값으로 저장했어요.' : `"${emotions[emo] || emo}" 표정만 저장했어요.`);
+        toast(allEmotions ? '모든 표정에 같은 크기·위치 조정을 저장했어요.' : `"${emotions[emo] || emo}" 표정만 저장했어요.`);
         draw();
       } catch (e) { toast(e.message, true); }
     };
@@ -126,11 +133,11 @@ function fitCard(ctx, c, chars) {
             slider('eye', '눈 높이', 0, 1, 0.005, pct), slider('chin', '턱 높이', 0, 1, 0.005, pct), slider('cx', '얼굴 가운데', 0, 1, 0.005, pct)),
           h('div', { class: 'row', style: { marginTop: '8px' } },
             h('button', { class: 'btn small primary', onclick: () => save(false) }, '이 표정만 저장'),
-            h('button', { class: 'btn small', onclick: () => save(true) }, '모든 표정에 적용')))));
+            h('button', { class: 'btn small', onclick: () => save(true) }, '크기·위치를 모든 표정에 적용')))));
   };
   draw();
   return h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, '대화창 맞추기'), h('span', { class: 'spacer' }), h('button', { class: 'btn small', onclick: () => compareEmotions(ctx, c, chars) }, '표정별 한눈에 보기')),
-    h('p', { class: 'muted', style: { fontSize: '13px', margin: '0 0 8px' } }, '모든 인물은 눈~턱 길이가 같아지도록 자동으로 맞춰져요. 어색하면 슬라이더로 조정하고 저장하세요.'), box);
+    h('p', { class: 'muted', style: { fontSize: '13px', margin: '0 0 8px' } }, '모든 인물은 눈~턱 길이가 같아지도록 자동으로 맞춰지고, 대사 글자는 초상화 오른쪽에서 시작해요. 어색하면 슬라이더로 조정하고 저장하세요.'), box);
 }
 
 export async function compareEmotions(ctx, c, chars) {

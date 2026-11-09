@@ -383,7 +383,9 @@ function addButtons(steps, redraw, change) {
   return h('div', { class: 'row', style: { marginTop: '10px' } },
     h('button', { class: 'btn small', onclick: () => add(newLine(steps.filter(x => x.kind === 'line').at(-2)?.speaker || 'pyle')) }, '+ 대사'),
     h('button', { class: 'btn small', onclick: () => add({ id: uid('D'), kind: 'direction', text: '' }) }, '+ 연출'),
-    h('button', { class: 'btn small', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'set_flag', args: {} }) }, '+ 명령'));
+    h('button', { class: 'btn small', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'set_flag', args: {} }) }, '+ 명령'),
+    h('button', { class: 'btn small', title: '이벤트 일러스트를 띄워요. 추가한 뒤 어떤 그림인지 고르세요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'show_cg', args: { key: '', duration: 0.9 } }) }, '+ 🖼 일러스트'),
+    h('button', { class: 'btn small', title: '띄워 둔 일러스트를 닫아요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'hide_cg', args: { duration: 0.6 } }) }, '+ 일러스트 닫기'));
 }
 
 const CLIP = 'pyle.story.clipboard';

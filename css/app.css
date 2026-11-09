@@ -169,10 +169,10 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .modal-bg.pv{background:rgba(0,0,0,.75)}
 .pv-stage{position:relative;width:min(960px,100%);aspect-ratio:16/9;background:#1d2420;border-radius:10px;overflow:hidden;cursor:pointer}
 .pv-scene{position:absolute;inset:0;background-size:cover;background-position:center}
-.pv-box{position:absolute;left:3%;right:3%;bottom:10%;height:28%;box-sizing:border-box;background:rgba(20,26,22,.88);border:2px solid #c9b98a;border-radius:10px;color:#f4efe2;padding:14px 18px 14px 28%;z-index:1}
+.pv-box{position:absolute;left:3%;right:3%;bottom:10%;height:28%;box-sizing:border-box;background:rgba(20,26,22,.88);border:2px solid #c9b98a;border-radius:10px;color:#f4efe2;padding:14px 18px 14px 25%;z-index:1}
 .pv-box.noportrait{padding-left:3%}
 .pv-box.dir{padding-left:18px;font-style:italic;color:#cfd8cf}
-.pv-pclip{position:absolute;left:0;top:0;overflow:hidden;pointer-events:none;z-index:2;-webkit-mask-image:linear-gradient(to right,#000 86%,transparent);mask-image:linear-gradient(to right,#000 86%,transparent)}
+.pv-pclip{position:absolute;left:0;top:0;overflow:hidden;pointer-events:none;z-index:2}
 .pv-pimg{position:absolute;max-width:none}
 .pv-name{font-weight:700;color:#e8d49a;margin-bottom:4px}
 .pv-text{font-size:clamp(14px,2.2vw,19px);line-height:1.6;white-space:pre-wrap}

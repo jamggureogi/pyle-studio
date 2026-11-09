@@ -8,7 +8,7 @@ const SECTIONS = [
   { title: '시나리오', dir: 'docs/시나리오' },
   { title: '캐릭터', dir: 'docs/캐릭터' },
   { title: '게임 시스템', dir: 'docs/게임시스템' },
-  { title: '프로젝트', files: ['docs/결정대기.md', 'docs/진행상황.md', 'docs/그림_제작목록.md', 'docs/리소스_현황.md', 'CLAUDE.md', 'docs/편집실/설계안.md'] },
+  { title: '프로젝트', files: ['docs/결정대기.md', 'docs/진행상황.md', 'docs/그림_제작목록.md', 'docs/맵_제작가이드.md', 'docs/리소스_현황.md', 'CLAUDE.md', 'docs/편집실/설계안.md'] },
 ];
 const DEFAULT_DOC = 'docs/시나리오/세계관.md';
 
