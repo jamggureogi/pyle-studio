@@ -93,6 +93,7 @@ function card(ctx, t, reg) {
     (t.references || []).length && h('div', {}, h('h4', { style: { margin: '10px 0 6px' } }, '참고 그림 (Codex가 꼭 같이 넣을 것)'), refBox),
     t.userFeedback?.comment && h('div', { class: 'resp' }, h('b', {}, '🙋 내 요청: '), t.userFeedback.comment),
     t.codexReport && h('div', { class: 'resp codex' }, h('b', {}, '🤖 Codex: '), t.codexReport.note || '(메모 없음)', t.codexReport.completedAt && h('span', { class: 'muted' }, ` · ${fmtDate(t.codexReport.completedAt)}`)),
+    t.claudeNote && h('div', { class: 'resp' }, h('b', {}, '🧩 Claude: '), t.claudeNote),
     thumbs && h('div', {}, h('h4', { style: { margin: '10px 0 6px' } }, `결과 ${files.length}장`), thumbs),
     t.status === '완료' && h('div', { class: 'row', style: { marginTop: '10px' } },
       h('button', { class: 'btn primary', onclick: () => setStatus('확인됨') }, '✔ 확인했어요'),
