@@ -153,9 +153,9 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .line-head select{max-width:140px}
 .line-head .name-in{width:110px}
 .sid{font-size:11px;color:#b5ae9f;margin-left:auto}
-.dir,.cmd{flex:1;display:flex;gap:8px;align-items:flex-start;min-width:0}
+.step>.dir,.step>.cmd{flex:1;display:flex;gap:8px;align-items:flex-start;min-width:0}
 .dir textarea{font-style:italic;color:#5d6b60;background:#f3f6f1}
-.cmd input{flex:1}
+.step>.cmd input{flex:1}
 .tag{font-size:11px;background:#e9e4d8;border-radius:4px;padding:2px 6px;margin-top:6px;white-space:nowrap}
 .step.direction .tag{background:#dfe9e0}
 .step.cmd .tag{background:#dde6f0}
@@ -177,6 +177,11 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .pv-bar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:6px;align-items:center;padding:6px 10px;color:#ccc;font-size:12px;background:rgba(0,0,0,.4)}
 .story>*{min-width:0}
 .scene-ed .card>.row{flex-wrap:wrap}
-.cmd{flex-wrap:wrap}
-.cmd input,.cmd select,.line-head select,.line-head input{min-width:0}
-.cmd input{flex:1 1 140px}
+.step>.cmd{flex-wrap:wrap}
+.step>.cmd input,.step>.cmd select,.line-head select,.line-head input{min-width:0}
+.step>.cmd input{flex:1 1 140px}
+.pv-missing{display:flex;align-items:flex-start;justify-content:center;padding-top:12%;color:#9aa69c;font-size:15px;background:repeating-linear-gradient(45deg,#232b26 0 14px,#262f29 14px 28px)}
+@keyframes pvflash{0%{box-shadow:inset 0 0 0 2000px rgba(255,255,255,.95)}100%{box-shadow:inset 0 0 0 2000px rgba(255,255,255,0)}}
+.pv-flash::after{content:"";position:absolute;inset:0;pointer-events:none;animation:pvflash .5s ease-out forwards}
+@keyframes pvshake{0%,100%{transform:translate(0)}20%{transform:translate(-8px,4px)}40%{transform:translate(7px,-5px)}60%{transform:translate(-6px,-3px)}80%{transform:translate(5px,4px)}}
+.pv-shake{animation:pvshake .45s linear 2}

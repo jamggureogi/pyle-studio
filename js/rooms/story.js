@@ -9,7 +9,8 @@ const statusClass = { 확정: 'ok', 초안: 'info', 수정필요: 'warn', 작성
 const CATEGORIES = { event: '이벤트', npc: 'NPC 대화', battle_start: '전투 시작', battle_after: '전투 후', field: '필드 조사', travel: '이동' };
 const OPS = {
   set_flag: '플래그 설정', give_item: '아이템 지급', remove_item: '아이템 회수', show_cg: '일러스트 표시', hide_cg: '일러스트 숨김',
-  fade_out: '화면 암전', fade_in: '암전 해제', camera_pan: '카메라 이동', start_battle: '전투 시작', add_party: '동료 합류', play_se: '효과음', wait: '잠시 대기',
+  fade_out: '화면 암전', fade_in: '암전 해제', camera_pan: '카메라 이동', start_battle: '전투 시작', add_party: '동료 합류', play_se: '효과음', play_bgm: '배경음악', wait: '잠시 대기',
+  title_motion: '타이틀 연출', flash: '화면 번쩍임', shake: '화면 흔들림',
 };
 const REPEAT = { none: '다시 말 걸면 반복 없음', tail: '끝부분 반복', separate: '별도 반복 대사' };
 
@@ -398,9 +399,9 @@ function repeatEditor(ctx, s, change) {
 
 // ---------- preview ----------
 async function preview(s) {
-  const steps = s.steps.filter(st => st.kind !== 'cmd' || ['show_cg', 'hide_cg', 'fade_out', 'give_item', 'add_party', 'start_battle'].includes(st.op));
+  const steps = s.steps.filter(st => st.kind !== 'cmd' || ['show_cg', 'hide_cg', 'fade_out', 'give_item', 'add_party', 'start_battle', 'flash', 'shake', 'title_motion'].includes(st.op));
   if (!steps.length) return toast('미리볼 대사가 없어요.', true);
-  let i = 0, cg = null;
+  let i = 0, cg = null, missing = null;
   const stage = h('div', { class: 'pv-stage' });
   const bg = h('div', { class: 'modal-bg pv', onclick: e => { if (e.target === bg) close(); } }, stage);
   const close = () => { bg.remove(); document.removeEventListener('keydown', key); };
@@ -413,11 +414,14 @@ async function preview(s) {
     if (st.kind === 'cmd') {
       if (st.op === 'show_cg') {
         const ill = S.story.illustrations?.[st.args?.key];
-        cg = ill ? await S.store.blobUrl(ill.file).catch(() => null) : null;
-      } else if (st.op === 'hide_cg') cg = null;
+        cg = ill?.file ? await S.store.blobUrl(ill.file).catch(() => null) : null;
+        missing = ill && !ill.file ? ill.title : null;
+      } else if (st.op === 'hide_cg') { cg = null; missing = null; }
       if (['show_cg', 'hide_cg'].includes(st.op)) return next();
     }
-    const scene = h('div', { class: 'pv-scene', style: cg ? { backgroundImage: `url(${cg})` } : {} });
+    const scene = h('div', { class: `pv-scene ${missing ? 'pv-missing' : ''}`, style: cg ? { backgroundImage: `url(${cg})` } : {} }, missing && `🖼 일러스트 준비 중: ${missing}`);
+    if (st.kind === 'cmd' && st.op === 'flash') { stage.classList.remove('pv-flash'); void stage.offsetWidth; stage.classList.add('pv-flash'); }
+    if (st.kind === 'cmd' && st.op === 'shake') { stage.classList.remove('pv-shake'); void stage.offsetWidth; stage.classList.add('pv-shake'); }
     let box;
     if (st.kind === 'line') {
       const url = await portraitUrl(st.speaker, st.emotion);
