@@ -9,8 +9,8 @@ const TILE = 64;
 const INDEX = 'data/maps/index.json';
 const TERRAINS = 'data/terrains.json';
 const STORY = 'data/story/prologue.json';
-const EVENT_KINDS = { trigger: '이벤트 지점', npc: 'NPC', exit: '출입구', chest: '보물상자', battle: '전투 지점' };
-const EVENT_ICON = { trigger: '★', npc: '☺', exit: '⇥', chest: '▣', battle: '⚔' };
+const EVENT_KINDS = { trigger: '이벤트 지점', npc: 'NPC', exit: '출입구', chest: '보물상자', battle: '전투 지점', start: '시작 위치' };
+const EVENT_ICON = { trigger: '★', npc: '☺', exit: '⇥', chest: '▣', battle: '⚔', start: '▶' };
 
 let M = null; // { map, sha, id, dirty, defs, renderer, ... }
 
@@ -61,14 +61,15 @@ async function terrainsView(ctx) {
 
 // ---------- editor ----------
 async function loadMap(ctx, id) {
-  const [idx, terr, story, assets] = await Promise.all([
+  const [idx, terr, story, assets, sprites] = await Promise.all([
     ctx.store.getJSON(INDEX, { maps: [] }), ctx.store.getJSON(TERRAINS, { terrains: [] }),
-    ctx.store.getJSON(STORY, { scenes: {} }).catch(() => ({ data: { scenes: {} } })), loadRegistry(ctx.store)]);
+    ctx.store.getJSON(STORY, { scenes: {} }).catch(() => ({ data: { scenes: {} } })), loadRegistry(ctx.store),
+    ctx.store.getJSON('data/sprites.json', {}).catch(() => ({ data: {} }))]);
   const list = idx.data.maps;
   const mid = id && list.find(m => m.id === id) ? id : list[0]?.id;
   if (!mid) return { list, empty: true };
   const f = await ctx.store.getJSON(`data/maps/${mid}.json`);
-  return { list, id: mid, map: f.data, sha: f.sha, defs: terr.data.terrains, scenes: story.data.scenes || {}, assets, dirty: false, store: ctx.store };
+  return { list, id: mid, map: f.data, sha: f.sha, defs: terr.data.terrains, scenes: story.data.scenes || {}, assets, sprites: sprites.data || {}, dirty: false, store: ctx.store };
 }
 
 async function editView(ctx, id) {
@@ -130,8 +131,33 @@ async function editView(ctx, id) {
   function overlay() {
     const g = over.getContext('2d');
     g.clearRect(0, 0, W, H);
-    // objects (sorted by y so lower ones draw in front)
-    for (const o of [...M.map.objects].sort((a, b) => a.y - b.y)) {
+    const loadImg = file => {
+      if (!objImgs.has(file)) { objImgs.set(file, null); ctx.store.blobUrl(file).then(u => { const im = new Image(); im.onload = () => { objImgs.set(file, im); overlay(); }; im.src = u; }).catch(() => {}); }
+      return objImgs.get(file);
+    };
+    // buildings (game data): picture if there is one, otherwise the footprint box
+    const items = [...M.map.objects.map(o => ({ o, y: o.y })), ...(M.map.buildings || []).map(b => ({ b, y: (b.y + b.h) * TILE }))];
+    for (const it of items.sort((a, b) => a.y - b.y)) {
+      if (it.b) {
+        const b = it.b, bottom = (b.y + b.h) * TILE;
+        const sp = M.sprites?.buildings?.[b.id];
+        const img = sp && loadImg(sp.file);
+        if (img) {
+          const wt = (sp.widthTiles || b.w + 0.6) * TILE, hh = img.naturalHeight * wt / img.naturalWidth;
+          g.drawImage(img, b.x * TILE + b.w * TILE / 2 - wt / 2, bottom - hh + 0.3 * TILE, wt, hh);
+        } else {
+          g.fillStyle = 'rgba(120,80,50,0.55)'; g.fillRect(b.x * TILE, b.y * TILE, b.w * TILE, b.h * TILE);
+        }
+        if (st.grid) {
+          g.save(); g.setLineDash([8, 6]); g.strokeStyle = 'rgba(255,90,60,0.9)'; g.lineWidth = 2;
+          g.strokeRect(b.x * TILE + 1, b.y * TILE + 1, b.w * TILE - 2, b.h * TILE - 2); g.restore();
+          if (b.label) { g.fillStyle = 'rgba(30,24,18,0.85)'; g.font = 'bold 16px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+            const tw = g.measureText(b.label).width + 14; g.fillRect(b.x * TILE + b.w * TILE / 2 - tw / 2, bottom - 26, tw, 22);
+            g.fillStyle = '#f3e4b8'; g.fillText(b.label, b.x * TILE + b.w * TILE / 2, bottom - 15); }
+        }
+        continue;
+      }
+      const o = it.o;
       const img = objImgs.get(o.file);
       if (img) { const w = img.naturalWidth * o.scale, hh = img.naturalHeight * o.scale; g.drawImage(img, o.x - w / 2, o.y - hh, w, hh); }
       else if (!objImgs.has(o.file)) { objImgs.set(o.file, null); ctx.store.blobUrl(o.file).then(u => { const im = new Image(); im.onload = () => { objImgs.set(o.file, im); overlay(); }; im.src = u; }); }
