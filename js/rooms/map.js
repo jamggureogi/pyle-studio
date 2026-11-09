@@ -1,0 +1,314 @@
+// Map room: paint terrain with natural noise-blended borders, place events linked to story scenes,
+// place objects, and assign approved ground textures to terrain types.
+import { h, toast, modal, confirmBox, fill } from '../ui.js';
+import { requestPanel } from './requests.js';
+import { TerrainRenderer } from '../terrain.js';
+import { loadRegistry, thumb, KINDS } from '../assets.js';
+
+const TILE = 64;
+const INDEX = 'data/maps/index.json';
+const TERRAINS = 'data/terrains.json';
+const STORY = 'data/story/prologue.json';
+const EVENT_KINDS = { trigger: '이벤트 지점', npc: 'NPC', exit: '출입구', chest: '보물상자', battle: '전투 지점' };
+const EVENT_ICON = { trigger: '★', npc: '☺', exit: '⇥', chest: '▣', battle: '⚔' };
+
+let M = null; // { map, sha, id, dirty, defs, renderer, ... }
+
+export async function render(ctx, rest) {
+  const tab = ['edit', 'terrains', 'requests'].includes(rest[0]) ? rest[0] : 'edit';
+  const page = h('div', { class: 'page wide' },
+    h('h1', {}, '🗺️ 맵룸'),
+    h('p', { class: 'sub' }, '지형을 칠하면 경계가 자연스럽게 섞여요. 이벤트 지점을 찍고 스토리 장면과 연결할 수 있어요.'),
+    h('div', { class: 'tabs' }, [['edit', '맵 편집'], ['terrains', '바닥 재질'], ['requests', '요청함']].map(([id, l]) => h('a', { href: `#/map/${id}`, class: tab === id ? 'on' : '' }, l))));
+  if (tab === 'requests') { page.append(requestPanel(ctx, 'map')); return page; }
+  if (tab === 'terrains') { page.append(await terrainsView(ctx)); return page; }
+  page.append(await editView(ctx, rest[1]));
+  return page;
+}
+
+window.addEventListener('beforeunload', e => { if (M?.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+// ---------- terrains (texture assignment) ----------
+async function terrainsView(ctx) {
+  const [{ data, sha }, assets] = await Promise.all([ctx.store.getJSON(TERRAINS, { terrains: [] }), loadRegistry(ctx.store)]);
+  const tiles = assets.filter(a => a.kind === 'tile' && a.status !== '보관');
+  const rows = data.terrains.map((t, i) => {
+    const sel = h('select', {}, h('option', { value: '' }, '(임시 색으로 표시)'), tiles.map(a => h('option', { value: a.file, selected: a.file === t.file }, `${a.id} · ${a.status}`)));
+    const color = h('input', { type: 'color', value: t.color });
+    const amp = h('input', { type: 'number', step: 0.05, min: 0, max: 1, value: t.edgeAmp, class: 'num' });
+    const freq = h('input', { type: 'number', step: 1, min: 2, max: 30, value: t.edgeFreq, class: 'num' });
+    const walk = h('input', { type: 'checkbox', checked: t.walkable !== false });
+    const collect = () => ({ ...t, file: sel.value || null, color: color.value, edgeAmp: Number(amp.value), edgeFreq: Number(freq.value), walkable: walk.checked });
+    return { el: h('tr', {}, h('td', {}, i + 1), h('td', {}, h('b', {}, t.name), h('div', { class: 'muted', style: { fontSize: '11px' } }, t.id)),
+      h('td', {}, t.file ? thumb(ctx.store, t.file, 'thumb mini') : h('span', { class: 'swatch', style: { background: t.color } })),
+      h('td', {}, sel), h('td', {}, color), h('td', {}, amp), h('td', {}, freq), h('td', {}, walk)), collect };
+  });
+  const save = async () => {
+    try {
+      await ctx.store.updateJSON(TERRAINS, d => ({ ...d, terrains: rows.map(r => r.collect()) }), '바닥 재질 설정 수정');
+      toast('저장했어요. 맵 편집에서 바로 반영돼요.');
+      M = null;
+    } catch (e) { toast(e.message, true); }
+  };
+  return h('div', {},
+    h('div', { class: 'card' },
+      h('p', { class: 'muted' }, '지형마다 승인된 바닥 재질 그림을 연결해요. 그림이 없으면 임시 색으로 보여요. 위쪽 지형일수록 아래 지형 위에 덮여요. "경계 흔들림"이 클수록 경계가 구불구불하고, "경계 촘촘함"이 클수록 잘게 들쭉날쭉해요.'),
+      h('div', { style: { overflowX: 'auto' } }, h('table', { class: 'tbl' },
+        h('tr', {}, ['순서', '지형', '그림', '바닥 재질 그림', '임시 색', '경계 흔들림', '경계 촘촘함', '걸을 수 있음'].map(x => h('th', {}, x))),
+        rows.map(r => r.el))),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: save }, '저장'), h('span', { class: 'muted' }, `바닥 재질 후보·승인 그림 ${tiles.length}장`))));
+}
+
+// ---------- editor ----------
+async function loadMap(ctx, id) {
+  const [idx, terr, story, assets] = await Promise.all([
+    ctx.store.getJSON(INDEX, { maps: [] }), ctx.store.getJSON(TERRAINS, { terrains: [] }),
+    ctx.store.getJSON(STORY, { scenes: {} }).catch(() => ({ data: { scenes: {} } })), loadRegistry(ctx.store)]);
+  const list = idx.data.maps;
+  const mid = id && list.find(m => m.id === id) ? id : list[0]?.id;
+  if (!mid) return { list, empty: true };
+  const f = await ctx.store.getJSON(`data/maps/${mid}.json`);
+  return { list, id: mid, map: f.data, sha: f.sha, defs: terr.data.terrains, scenes: story.data.scenes || {}, assets, dirty: false, store: ctx.store };
+}
+
+async function editView(ctx, id) {
+  if (!M || M.store !== ctx.store || (id && id !== M.id)) {
+    if (M?.dirty && !(await confirmBox('저장 안 한 맵 변경이 있어요. 버리고 다른 맵을 열까요?', '버리기'))) { ctx.go(`#/map/edit/${M.id}`); }
+    M = await loadMap(ctx, id);
+  }
+  if (M.empty) return h('div', { class: 'card empty' }, '맵이 없어요. ', h('button', { class: 'btn small', onclick: () => newMap(ctx) }, '+ 새 맵'));
+  const st = M.ui ||= { tool: 'terrain', terrain: M.map.terrains.indexOf('dirt_path') >= 0 ? M.map.terrains.indexOf('dirt_path') : 0, brush: 1, grid: true, zoom: 0.5, quality: 0.5, sel: null };
+
+  const stage = h('div', { class: 'map-stage' }, h('div', { class: 'empty' }, '지형 그리는 중… (처음엔 몇 초 걸려요)'));
+  const side = h('div', { class: 'map-side' });
+  const props = h('div', { class: 'card map-props' });
+  const status = h('span', { class: 'muted' });
+
+  const saveBtn = h('button', { class: 'btn small primary', disabled: !M.dirty }, '저장');
+  const markDirty = () => { M.dirty = true; saveBtn.disabled = false; status.textContent = '저장 안 한 변경 있음'; };
+  saveBtn.onclick = async () => {
+    try {
+      M.sha = await ctx.store.putText(`data/maps/${M.id}.json`, JSON.stringify(M.map) + '\n', M.sha, `맵 수정: ${M.map.name}`);
+      M.dirty = false; saveBtn.disabled = true; status.textContent = '저장했어요'; toast('저장했어요.');
+    } catch (e) { toast(e.message, true); }
+  };
+
+  const mapSel = h('select', {}, M.list.map(m => h('option', { value: m.id, selected: m.id === M.id }, m.name)));
+  mapSel.onchange = () => ctx.go(`#/map/edit/${mapSel.value}`);
+  const q = h('select', {}, [[0.5, '보통 화질 (빠름)'], [1, '고화질']].map(([v, l]) => h('option', { value: v, selected: v === st.quality }, l)));
+  q.onchange = () => { st.quality = Number(q.value); M.renderer = null; draw(); };
+  const zoomSel = h('select', {}, [[0.5, '50%'], [0.75, '75%'], [1, '100%'], [1.5, '150%']].map(([v, l]) => h('option', { value: v, selected: v === st.zoom }, l)));
+  zoomSel.onchange = () => { st.zoom = Number(zoomSel.value); layout(); };
+  const gridChk = h('input', { type: 'checkbox', checked: st.grid });
+  gridChk.onchange = () => { st.grid = gridChk.checked; overlay(); };
+
+  // canvases: terrain (from renderer) + overlay (grid, events, objects)
+  const base = h('canvas', { class: 'map-base' });
+  const over = h('canvas', { class: 'map-over' });
+  const wrap = h('div', { class: 'map-canvas' }, base, over);
+  const W = M.map.cols * TILE, H = M.map.rows * TILE;
+  const objImgs = new Map();
+
+  function layout() {
+    for (const c of [base, over]) { c.style.width = `${W * st.zoom}px`; c.style.height = `${H * st.zoom}px`; }
+    wrap.style.width = `${W * st.zoom}px`; wrap.style.height = `${H * st.zoom}px`;
+  }
+  async function draw() {
+    if (!M.renderer || M.renderer.scale !== st.quality) {
+      M.renderer = new TerrainRenderer(M.map, M.defs, ctx.store, st.quality);
+      await M.renderer.init();
+      await new Promise(r => setTimeout(r, 30));
+      M.renderer.render();
+    }
+    base.width = M.renderer.W; base.height = M.renderer.H;
+    base.getContext('2d').drawImage(M.renderer.canvas, 0, 0);
+    over.width = W; over.height = H;
+    layout();
+    stage.replaceChildren(wrap);
+    overlay();
+  }
+  function overlay() {
+    const g = over.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    // objects (sorted by y so lower ones draw in front)
+    for (const o of [...M.map.objects].sort((a, b) => a.y - b.y)) {
+      const img = objImgs.get(o.file);
+      if (img) { const w = img.naturalWidth * o.scale, hh = img.naturalHeight * o.scale; g.drawImage(img, o.x - w / 2, o.y - hh, w, hh); }
+      else if (!objImgs.has(o.file)) { objImgs.set(o.file, null); ctx.store.blobUrl(o.file).then(u => { const im = new Image(); im.onload = () => { objImgs.set(o.file, im); overlay(); }; im.src = u; }); }
+      if (st.sel === o) { g.strokeStyle = '#ffd34d'; g.lineWidth = 3; g.beginPath(); g.arc(o.x, o.y, 12, 0, Math.PI * 2); g.stroke(); }
+    }
+    if (st.grid) {
+      g.strokeStyle = 'rgba(255,255,255,0.18)'; g.lineWidth = 1;
+      for (let x = 0; x <= W; x += TILE) { g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, H); g.stroke(); }
+      for (let y = 0; y <= H; y += TILE) { g.beginPath(); g.moveTo(0, y + 0.5); g.lineTo(W, y + 0.5); g.stroke(); }
+    }
+    for (const ev of M.map.events) {
+      const cx = ev.x * TILE + TILE / 2, cy = ev.y * TILE + TILE / 2;
+      g.fillStyle = st.sel === ev ? 'rgba(255,211,77,0.9)' : 'rgba(30,36,32,0.75)';
+      g.beginPath(); g.roundRect(ev.x * TILE + 6, ev.y * TILE + 6, TILE - 12, TILE - 12, 10); g.fill();
+      g.fillStyle = st.sel === ev ? '#2b2a27' : '#fff'; g.font = 'bold 26px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(EVENT_ICON[ev.kind] || '?', cx, cy - 4);
+      g.font = '12px sans-serif'; g.fillText((ev.label || '').slice(0, 8), cx, cy + 18);
+    }
+  }
+
+  // painting & placing
+  const posOf = e => { const r = over.getBoundingClientRect(); return { x: (e.clientX - r.left) / st.zoom, y: (e.clientY - r.top) / st.zoom }; };
+  let painting = false, dragObj = null;
+  const paintAt = p => {
+    const cr = Math.round(p.y / TILE), cc = Math.round(p.x / TILE), n = st.brush - 1;
+    let changed = false;
+    for (let r = cr - n; r <= cr + n; r++) for (let c = cc - n; c <= cc + n; c++) {
+      if (r < 0 || c < 0 || r > M.map.rows || c > M.map.cols) continue;
+      const i = r * (M.map.cols + 1) + c;
+      if (M.map.corners[i] !== st.terrain) { M.map.corners[i] = st.terrain; changed = true; }
+    }
+    if (!changed) return;
+    markDirty();
+    M.renderer.render(cc - n - 1, cr - n - 1, cc + n, cr + n);
+    base.getContext('2d').drawImage(M.renderer.canvas, 0, 0);
+  };
+  const hitEvent = p => M.map.events.find(ev => ev.x === Math.floor(p.x / TILE) && ev.y === Math.floor(p.y / TILE));
+  const hitObj = p => [...M.map.objects].reverse().find(o => Math.abs(o.x - p.x) < 40 && p.y < o.y + 10 && p.y > o.y - 120);
+  over.addEventListener('pointerdown', e => {
+    const p = posOf(e);
+    over.setPointerCapture(e.pointerId);
+    if (st.tool === 'terrain') { painting = true; paintAt(p); return; }
+    if (st.tool === 'event') {
+      const hit = hitEvent(p);
+      if (hit) st.sel = hit;
+      else {
+        const ev = { id: `ev_${Date.now().toString(36)}`, kind: 'trigger', x: Math.floor(p.x / TILE), y: Math.floor(p.y / TILE), label: '새 이벤트' };
+        M.map.events.push(ev); st.sel = ev; markDirty();
+      }
+      overlay(); drawProps(); return;
+    }
+    if (st.tool === 'object') {
+      const hit = hitObj(p);
+      if (hit) { st.sel = hit; dragObj = { o: hit, dx: hit.x - p.x, dy: hit.y - p.y }; }
+      else if (st.objFile) { const o = { file: st.objFile, x: Math.round(p.x), y: Math.round(p.y), scale: st.objScale || 0.5, collide: true }; M.map.objects.push(o); st.sel = o; markDirty(); }
+      else toast('왼쪽에서 놓을 사물을 먼저 고르세요.', true);
+      overlay(); drawProps(); return;
+    }
+    if (st.tool === 'select') { st.sel = hitEvent(p) || hitObj(p) || null; overlay(); drawProps(); }
+  });
+  over.addEventListener('pointermove', e => {
+    const p = posOf(e);
+    status.textContent = `칸 (${Math.floor(p.x / TILE)}, ${Math.floor(p.y / TILE)})${M.dirty ? ' · 저장 안 한 변경 있음' : ''}`;
+    if (painting) paintAt(p);
+    if (dragObj) { dragObj.o.x = Math.round(p.x + dragObj.dx); dragObj.o.y = Math.round(p.y + dragObj.dy); markDirty(); overlay(); }
+  });
+  over.addEventListener('pointerup', () => { painting = false; dragObj = null; });
+
+  function drawSide() {
+    const tools = [['terrain', '🖌 지형 붓'], ['event', '★ 이벤트'], ['object', '🌲 사물'], ['select', '👆 선택']];
+    const objAssets = M.assets.filter(a => ['object', 'decor'].includes(a.kind) && a.status !== '보관');
+    fill(side, 
+      h('div', { class: 'card' },
+        h('div', { class: 'tool-row' }, tools.map(([t, l]) => h('button', { class: `btn small ${st.tool === t ? 'primary' : ''}`, onclick: () => { st.tool = t; drawSide(); } }, l))),
+        st.tool === 'terrain' && h('div', {},
+          h('h4', {}, '지형'),
+          h('div', { class: 'palette' }, M.map.terrains.map((id, i) => {
+            const d = M.defs.find(x => x.id === id) || { name: id, color: '#888' };
+            return h('button', { class: `pal ${st.terrain === i ? 'on' : ''}`, onclick: () => { st.terrain = i; drawSide(); } },
+              h('span', { class: 'swatch', style: { background: d.color } }), d.name);
+          })),
+          h('h4', {}, '붓 크기'),
+          h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
+          h('p', { class: 'muted', style: { fontSize: '12px' } }, '칸의 모서리를 칠해요. 이웃 모서리와 다른 지형이면 그 사이가 자연스럽게 섞여요.')),
+        st.tool === 'event' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '맵을 누르면 그 칸에 이벤트 지점이 생겨요. 이미 있는 지점을 누르면 선택돼요. 오른쪽에서 종류와 연결할 스토리 장면을 고르세요.'),
+        st.tool === 'object' && h('div', {},
+          h('p', { class: 'muted', style: { fontSize: '13px' } }, '사물을 고르고 맵을 누르면 그 자리에 놓여요(누른 곳이 사물의 발밑). 놓인 사물은 끌어서 옮겨요.'),
+          objAssets.length ? h('div', { class: 'thumb-grid' }, objAssets.map(a => h('div', { class: `thumb-card ${st.objFile === a.file ? 'on' : ''}`, onclick: () => { st.objFile = a.file; drawSide(); } }, thumb(ctx.store, a.file), h('div', { class: 'cap' }, a.id))))
+            : h('div', { class: 'empty' }, '맵 사물 그림이 아직 없어요. 캐릭터룸 → 그림 올리기에서 종류를 "맵 사물"로 올려 주세요.')),
+        st.tool === 'select' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '이벤트나 사물을 눌러 선택하면 오른쪽에서 고치거나 지울 수 있어요.')),
+      h('div', { class: 'card' },
+        h('h4', { style: { marginTop: 0 } }, '맵 정보'),
+        h('div', { class: 'muted', style: { fontSize: '13px' } }, `${M.map.cols} × ${M.map.rows}칸 (${M.map.cols * TILE}×${M.map.rows * TILE}px)`),
+        M.map.note && h('p', { class: 'muted', style: { fontSize: '12px' } }, M.map.note),
+        h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: () => resizeMap(ctx) }, '크기 바꾸기'), h('button', { class: 'btn small', onclick: () => newMap(ctx) }, '+ 새 맵'))));
+  }
+
+  function drawProps() {
+    const s = st.sel;
+    if (!s) { fill(props, h('div', { class: 'muted', style: { fontSize: '13px' } }, '선택한 것이 없어요.')); return; }
+    const del = h('button', { class: 'btn small danger', onclick: () => {
+      const arr = s.kind ? M.map.events : M.map.objects;
+      arr.splice(arr.indexOf(s), 1); st.sel = null; markDirty(); overlay(); drawProps();
+    } }, '지우기');
+    if (s.kind) {
+      const kind = h('select', {}, Object.entries(EVENT_KINDS).map(([v, l]) => h('option', { value: v, selected: v === s.kind }, l)));
+      kind.onchange = () => { s.kind = kind.value; markDirty(); overlay(); drawProps(); };
+      const label = h('input', { value: s.label || '' });
+      label.oninput = () => { s.label = label.value; markDirty(); overlay(); };
+      const scenes = Object.values(M.scenes);
+      const scene = h('select', {}, h('option', { value: '' }, '(연결 안 함)'), scenes.map(sc => h('option', { value: sc.id, selected: sc.id === s.scene }, `${sc.title} [${sc.status}]`)));
+      scene.onchange = () => { s.scene = scene.value || undefined; markDirty(); };
+      const to = h('input', { value: s.to || '', placeholder: '이동할 맵 id' });
+      to.oninput = () => { s.to = to.value; markDirty(); };
+      fill(props, h('h4', { style: { marginTop: 0 } }, `이벤트 (${s.x}, ${s.y})`),
+        h('label', { class: 'field' }, h('span', {}, '종류'), kind),
+        h('label', { class: 'field' }, h('span', {}, '이름표'), label),
+        h('label', { class: 'field' }, h('span', {}, '연결할 스토리 장면'), scene),
+        s.kind === 'exit' && h('label', { class: 'field' }, h('span', {}, '이동할 맵'), to),
+        s.scene && h('a', { href: `#/story/edit/${s.scene}` }, '스토리룸에서 이 장면 열기 →'),
+        h('div', { class: 'row', style: { marginTop: '8px' } }, del));
+    } else {
+      const sc = h('input', { type: 'number', step: 0.05, min: 0.05, value: s.scale, class: 'num' });
+      sc.oninput = () => { s.scale = Number(sc.value) || 0.5; st.objScale = s.scale; markDirty(); overlay(); };
+      const col = h('input', { type: 'checkbox', checked: s.collide !== false });
+      col.onchange = () => { s.collide = col.checked; markDirty(); };
+      fill(props, h('h4', { style: { marginTop: 0 } }, '사물'), h('div', { class: 'muted', style: { fontSize: '12px' } }, s.file),
+        h('label', { class: 'field' }, h('span', {}, '크기 배율'), sc),
+        h('label', { class: 'row' }, col, '지나갈 수 없음 (발밑)'),
+        h('div', { class: 'row', style: { marginTop: '8px' } }, del));
+    }
+  }
+
+  drawSide(); drawProps();
+  setTimeout(draw, 20);
+  return h('div', {},
+    h('div', { class: 'savebar' }, mapSel, zoomSel, q, h('label', { class: 'row', style: { gap: '4px' } }, gridChk, '격자'), status, h('span', { class: 'spacer' }), saveBtn),
+    h('div', { class: 'map-layout' }, side, stage, props));
+}
+
+async function newMap(ctx) {
+  const name = h('input', { placeholder: '예) 하젤린 마을' });
+  const id = h('input', { placeholder: '영어 id (예: hazelin)' });
+  const cols = h('input', { type: 'number', value: 30, min: 10, max: 120 });
+  const rows = h('input', { type: 'number', value: 17, min: 8, max: 120 });
+  const { data: terr } = await ctx.store.getJSON(TERRAINS, { terrains: [] });
+  const baseSel = h('select', {}, terr.terrains.map(t => h('option', { value: t.id, selected: t.id === 'grass_a' }, t.name)));
+  const ok = await modal('새 맵', h('div', {},
+    h('label', { class: 'field' }, h('span', {}, '맵 이름'), name), h('label', { class: 'field' }, h('span', {}, 'id'), id),
+    h('div', { class: 'row' }, h('label', { class: 'field' }, h('span', {}, '가로 칸'), cols), h('label', { class: 'field' }, h('span', {}, '세로 칸'), rows)),
+    h('label', { class: 'field' }, h('span', {}, '바탕 지형'), baseSel),
+    h('p', { class: 'muted', style: { fontSize: '12px' } }, '화면 한 장은 가로 20칸, 세로 11칸 정도예요.')),
+    [{ label: '취소', value: false }, { label: '만들기', value: true, primary: true }]);
+  if (!ok) return;
+  const mid = (id.value.trim() || `map_${Date.now().toString(36)}`).toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+  const c = Number(cols.value) || 30, r = Number(rows.value) || 17;
+  const ids = terr.terrains.map(t => t.id);
+  const map = { id: mid, name: name.value.trim() || mid, cols: c, rows: r, tile: TILE, terrains: ids, corners: new Array((c + 1) * (r + 1)).fill(ids.indexOf(baseSel.value)), objects: [], events: [] };
+  try {
+    await ctx.store.putText(`data/maps/${mid}.json`, JSON.stringify(map) + '\n', null, `새 맵: ${map.name}`);
+    await ctx.store.updateJSON(INDEX, d => { d.maps ||= []; d.maps.push({ id: mid, name: map.name }); return d; }, `맵 목록에 추가: ${map.name}`, { maps: [] });
+    M = null;
+    ctx.go(`#/map/edit/${mid}`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function resizeMap(ctx) {
+  const cols = h('input', { type: 'number', value: M.map.cols, min: 5, max: 120 });
+  const rows = h('input', { type: 'number', value: M.map.rows, min: 5, max: 120 });
+  const ok = await modal('맵 크기 바꾸기', h('div', {}, h('div', { class: 'row' }, h('label', { class: 'field' }, h('span', {}, '가로 칸'), cols), h('label', { class: 'field' }, h('span', {}, '세로 칸'), rows)),
+    h('p', { class: 'muted', style: { fontSize: '12px' } }, '오른쪽·아래쪽이 늘어나거나 잘려요.')), [{ label: '취소', value: false }, { label: '바꾸기', value: true, primary: true }]);
+  if (!ok) return;
+  const nc = Number(cols.value), nr = Number(rows.value), old = M.map;
+  const corners = [];
+  for (let r = 0; r <= nr; r++) for (let c = 0; c <= nc; c++) corners.push(old.corners[Math.min(r, old.rows) * (old.cols + 1) + Math.min(c, old.cols)]);
+  Object.assign(old, { cols: nc, rows: nr, corners });
+  old.events = old.events.filter(e => e.x < nc && e.y < nr);
+  M.dirty = true; M.renderer = null;
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+}

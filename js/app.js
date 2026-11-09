@@ -3,10 +3,10 @@ import { h, toast, errorBox, loading } from './ui.js';
 import * as home from './rooms/home.js';
 import * as scenario from './rooms/scenario.js';
 import * as requests from './rooms/requests.js';
-import * as placeholder from './rooms/placeholder.js';
 import * as story from './rooms/story.js';
 import * as character from './rooms/character.js';
 import * as system from './rooms/system.js';
+import * as maproom from './rooms/map.js';
 
 export const ROOMS = [
   { id: 'home', name: '홈', ico: '🏠', mod: home },
@@ -14,7 +14,7 @@ export const ROOMS = [
   { id: 'system', name: '시스템', ico: '⚔️', mod: system },
   { id: 'character', name: '캐릭터', ico: '🧑', mod: character },
   { id: 'story', name: '스토리', ico: '🎬', mod: story },
-  { id: 'map', name: '맵', ico: '🗺️', mod: placeholder },
+  { id: 'map', name: '맵', ico: '🗺️', mod: maproom },
   { id: 'requests', name: '요청함', ico: '📮', mod: requests },
 ];
 export const roomName = id => ROOMS.find(r => r.id === id)?.name || id;

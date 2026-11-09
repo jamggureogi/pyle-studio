@@ -17,6 +17,12 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+// Like el.replaceChildren but skips null/false, the same way h() does.
+export function fill(el, ...kids) {
+  el.replaceChildren(...kids.flat(Infinity).filter(k => k != null && k !== false).map(k => k instanceof Node ? k : document.createTextNode(String(k))));
+  return el;
+}
+
 export function toast(msg, isError = false) {
   const box = document.getElementById('toast');
   const t = h('div', { class: isError ? 'err' : '' }, msg);
