@@ -43,36 +43,64 @@ const ctx = {
   },
 };
 
+async function connectWith(token, repoStr) {
+  const [owner, repo] = repoStr.split('/');
+  const s = new GitHubStore({ token, owner, repo });
+  await s.check();
+  localStorage.setItem('pyle.token', token);
+  localStorage.setItem('pyle.repo', `${owner}/${repo}`);
+  store = s;
+}
+
+// Let the browser's password manager keep the key, so other computers signed into
+// the same browser account can fill it in with one click. Nothing is stored online by the studio.
+async function rememberInBrowser(token) {
+  try {
+    if ('PasswordCredential' in window) {
+      await navigator.credentials.store(new PasswordCredential({ id: 'pyle-studio', password: token, name: '신관전승 편집실' }));
+    }
+  } catch { /* the browser may refuse; the normal form save prompt still works */ }
+}
+
+async function autoFillFromBrowser() {
+  try {
+    if (!('PasswordCredential' in window)) return null;
+    const c = await navigator.credentials.get({ password: true, mediation: 'optional' });
+    return c?.password || null;
+  } catch { return null; }
+}
+
 function setupPage() {
-  const tokenIn = h('input', { type: 'password', placeholder: 'github_pat_로 시작하는 열쇠', autocomplete: 'off' });
+  const user = h('input', { name: 'username', autocomplete: 'username', value: 'pyle-studio', readonly: true, class: 'hidden-user' });
+  const tokenIn = h('input', { name: 'password', type: 'password', placeholder: 'github_pat_로 시작하는 열쇠', autocomplete: 'current-password' });
   const repoIn = h('input', { value: localStorage.getItem('pyle.repo') || DEFAULT_REPO });
-  const btn = h('button', { class: 'btn primary', onclick: connect }, '연결하기');
-  async function connect() {
-    const token = tokenIn.value.trim();
-    if (!token) return toast('열쇠를 입력해 주세요.', true);
+  const btn = h('button', { class: 'btn primary', type: 'submit' }, '연결하기');
+  const connect = async token => {
     btn.disabled = true;
-    const [owner, repo] = repoIn.value.trim().split('/');
-    const s = new GitHubStore({ token, owner, repo });
     try {
-      await s.check();
-      localStorage.setItem('pyle.token', token);
-      localStorage.setItem('pyle.repo', `${owner}/${repo}`);
-      store = s;
+      await connectWith(token, repoIn.value.trim());
+      await rememberInBrowser(token);
       toast('연결됐어요!');
       render();
-    } catch (e) {
-      toast(e.message, true);
-      btn.disabled = false;
-    }
-  }
+    } catch (e) { toast(e.message, true); btn.disabled = false; }
+  };
+  const form = h('form', { method: 'post', action: '#', onsubmit: e => {
+    e.preventDefault();
+    const token = tokenIn.value.trim();
+    if (!token) return toast('열쇠를 입력해 주세요.', true);
+    connect(token);
+  } },
+    user,
+    h('label', { class: 'field' }, h('span', {}, '열쇠 (GitHub 토큰)'), tokenIn),
+    h('label', { class: 'field' }, h('span', {}, '게임 자료 저장소'), repoIn),
+    h('div', { class: 'row' }, btn));
+  // Ask the browser for a saved key right away (one tap on most browsers).
+  autoFillFromBrowser().then(t => { if (t && !tokenIn.value) { tokenIn.value = t; toast('브라우저에 저장된 열쇠를 불러왔어요. "연결하기"를 눌러 주세요.'); } });
   return h('div', { class: 'setup' },
     h('div', { class: 'card' },
       h('h1', {}, '신관전승 편집실'),
-      h('p', { class: 'muted' }, '처음 한 번만 게임 자료 저장소의 열쇠(GitHub 토큰)를 넣어 주세요. 열쇠는 이 브라우저에만 저장되고 다른 곳으로 보내지지 않아요.'),
-      h('label', { class: 'field' }, h('span', {}, '열쇠 (GitHub 토큰)'), tokenIn),
-      h('label', { class: 'field' }, h('span', {}, '게임 자료 저장소'), repoIn),
-      h('div', { class: 'row' }, btn),
-    ),
+      h('p', { class: 'muted' }, '열쇠(GitHub 토큰)로 연결해요. 연결할 때 브라우저가 "비밀번호를 저장할까요?"라고 물으면 ', h('b', {}, '저장'), '을 눌러 주세요. 같은 브라우저 계정(구글·마이크로소프트 등)으로 로그인한 다른 컴퓨터에서는 열쇠가 자동으로 채워져요.'),
+      form),
     h('div', { class: 'card' },
       h('h2', {}, '열쇠 만드는 방법'),
       h('ol', {},
@@ -80,11 +108,8 @@ function setupPage() {
         h('li', {}, 'Token name: ', h('b', {}, '신관전승 편집실'), ' / Expiration: 원하는 기간'),
         h('li', {}, 'Repository access: ', h('b', {}, 'Only select repositories'), ' → ', h('b', {}, 'pyle_claude'), ' 선택'),
         h('li', {}, 'Permissions에서 ', h('b', {}, '+ Add permissions'), ' → ', h('b', {}, 'Contents'), ' 체크 → 권한을 ', h('b', {}, 'Read and write'), '로 변경 (Metadata는 자동으로 추가돼요)'),
-        h('li', {}, '맨 아래 ', h('b', {}, 'Generate token'), ' → 나온 열쇠를 복사해서 위 칸에 붙여넣기'),
-      ),
-      h('p', { class: 'muted' }, '⚠️ 열쇠는 채팅이나 다른 곳에 붙여넣지 마세요.'),
-    ),
-  );
+        h('li', {}, '맨 아래 ', h('b', {}, 'Generate token'), ' → 나온 열쇠를 위 칸에 붙여넣기')),
+      h('p', { class: 'muted' }, '⚠️ 열쇠는 채팅이나 다른 곳에 붙여넣지 마세요. 잃어버렸으면 같은 페이지에서 새로 만들면 돼요.')));
 }
 
 function parseHash() {
@@ -105,7 +130,7 @@ function buildShell() {
     h('aside', { class: 'side' },
       h('div', { class: 'brand' }, '신관전승', h('small', {}, '통합 편집실')),
       nav,
-      h('div', { class: 'foot' }, store.label, h('br'), h('a', { href: '#', onclick: e => { e.preventDefault(); ctx.logout(); } }, '열쇠 지우기')),
+      h('div', { class: 'foot' }, store.label, h('br'), h('a', { href: '#', onclick: e => { e.preventDefault(); ctx.logout(); } }, '로그아웃')),
     ),
     shellMain));
 }

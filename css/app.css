@@ -247,3 +247,4 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .map-side h4{margin:12px 0 6px}
 .savebar{flex-wrap:wrap}
 .savebar select{max-width:100%}
+.hidden-user{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
