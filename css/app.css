@@ -175,7 +175,7 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .pv-pclip{position:absolute;left:0;top:0;overflow:hidden;pointer-events:none;z-index:2}
 .pv-pimg{position:absolute;max-width:none}
 .pv-name{font-weight:700;color:#e8d49a;margin-bottom:4px}
-.pv-text{font-size:clamp(14px,2.2vw,19px);line-height:1.6;white-space:pre-wrap}
+.pv-text{font-size:clamp(13px,1.95vw,17px);line-height:1.6;white-space:pre-wrap}
 .pv-bar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:6px;align-items:center;padding:6px 10px;color:#ccc;font-size:12px;background:rgba(0,0,0,.4)}
 .story>*{min-width:0}
 .scene-ed .card>.row{flex-wrap:wrap}
