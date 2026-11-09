@@ -7,6 +7,26 @@ import {
 
 const SPRITE_KINDS = ['field', 'battle', 'cutin', 'effect'];
 
+// Approve assets. Portraits that know their character and expression are put to use right away.
+async function approveAll(ctx, list) {
+  const auto = list.filter(a => a.kind === 'portrait' && a.owner && a.emotion);
+  if (auto.length) {
+    await ctx.store.updateJSON(CHARS, d => {
+      for (const a of auto) { const c = d.characters.find(x => x.id === a.owner); if (c) (c.portraits ||= {})[a.emotion] = a.file; }
+      return d;
+    }, `초상화 교체 ${auto.length}장`);
+  }
+  const ids = new Set(list.map(a => a.file));
+  const autoIds = new Set(auto.map(a => a.file));
+  const today = new Date().toISOString().slice(0, 10);
+  await updateRegistry(ctx.store, all => {
+    for (const x of all) if (ids.has(x.file)) { x.status = autoIds.has(x.file) ? '사용중' : '승인'; x.updatedAt = today; }
+    // the replaced preview portraits go to the archive
+    for (const a of auto) for (const x of all) if (x.owner === a.owner && x.kind === 'portrait' && x.file !== a.file && x.status === '사용중' && (x.emotion === a.emotion || x.file.endsWith(`/${a.owner}_${a.emotion}.webp`))) x.status = '보관';
+  }, `그림 승인 ${list.length}장`);
+  return auto.length;
+}
+
 export async function render(ctx, rest) {
   const tab = ['people', 'library', 'upload', 'requests'].includes(rest[0]) ? rest[0] : 'people';
   const page = h('div', { class: 'page wide' },
@@ -85,6 +105,13 @@ async function libraryView(ctx, rest) {
       h('span', { class: 'spacer' }),
       sel([['', '모든 종류'], ...Object.entries(KINDS)], f.kind, 'kind'),
       sel([['', '모든 인물'], ...chars.characters.map(c => [c.id, c.name])], f.owner, 'owner')),
+    f.status === '후보' && shown.length > 1 && h('div', { class: 'card row' },
+      h('span', {}, `보이는 후보 ${shown.length}장`),
+      h('button', { class: 'btn primary', onclick: async () => {
+        if (!await confirmBox(`보이는 후보 ${shown.length}장을 모두 승인할까요? 표정이 정해진 초상화는 바로 교체돼요.`, '모두 승인')) return;
+        try { const n = await approveAll(ctx, shown); toast(`${shown.length}장을 승인했어요${n ? ` (초상화 ${n}장 교체)` : ''}.`); ctx.refreshBadges(); window.dispatchEvent(new HashChangeEvent('hashchange')); }
+        catch (e) { toast(e.message, true); }
+      } }, '✔ 모두 승인')),
     shown.length ? h('div', { class: 'card' }, assetGrid(ctx, shown, chars)) : h('div', { class: 'card empty' }, f.status === '후보' ? '승인 대기 중인 그림이 없어요.' : '조건에 맞는 그림이 없어요.'));
 }
 
@@ -159,7 +186,7 @@ async function assetDetail(ctx, a, chars) {
   };
 
   const actions = h('div', { class: 'row', style: { marginTop: '10px' } },
-    a.status === '후보' && h('button', { class: 'btn primary', onclick: () => setStatus('승인', '승인') }, '✔ 승인'),
+    a.status === '후보' && h('button', { class: 'btn primary', onclick: async () => { const n = await approveAll(ctx, [a]); toast(n ? '승인하고 초상화를 교체했어요.' : '승인했어요.'); ctx.refreshBadges(); refresh(); } }, '✔ 승인'),
     a.status !== '사용중' && a.status !== '후보' && h('button', { class: 'btn', onclick: () => setStatus('사용중', '사용 시작') }, '게임에 사용'),
     a.status !== '보관' && h('button', { class: 'btn', onclick: () => setStatus('보관', '보관') }, a.status === '후보' ? '반려(보관)' : '보관'),
     a.status === '보관' && h('button', { class: 'btn', onclick: () => setStatus('후보', '후보로 되돌리기') }, '후보로 되돌리기'),
