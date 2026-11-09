@@ -314,3 +314,25 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .compare-grid.three{grid-template-columns:repeat(3,1fr)}
 .modal:has(.compare-grid.three){width:min(1200px,100%)}
 @media (max-width:900px){.compare-grid.three{grid-template-columns:1fr 1fr}}
+
+/* review room */
+.review-img{background:#eee9de;border-radius:8px;min-height:120px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.review-img img{width:100%;display:block;cursor:zoom-in}
+.review-card.leaving,.codex-card.leaving{transition:opacity .4s, transform .4s;opacity:0;transform:translateX(30px)}
+.zoom{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;align-items:center;justify-content:center;z-index:500;cursor:zoom-out}
+.zoom.on{display:flex}
+.zoom img{max-width:96vw;max-height:94vh}
+
+/* codex room */
+.codex-how .ask{display:block;flex:1;background:#f1ede4;padding:8px 10px;border-radius:8px;font-size:13px;white-space:normal}
+.codex-card .out code{background:#f1ede4;padding:2px 6px;border-radius:4px;font-size:13px}
+.codex-card .notes{font-size:13px;background:#fbf6e9;border-radius:8px;padding:8px 10px;margin:8px 0}
+.codex-card pre.prompt{white-space:pre-wrap;background:#2f3a33;color:#e9efe9;padding:12px;border-radius:8px;font-size:12.5px;line-height:1.5;max-height:320px;overflow:auto}
+.codex-card details summary{cursor:pointer;font-weight:600;margin:6px 0}
+.refs{display:flex;gap:10px;flex-wrap:wrap}
+.ref{width:150px;font-size:12px}
+.ref .thumb{aspect-ratio:16/10}
+.ref code{display:block;font-size:11px;color:var(--muted);word-break:break-all}
+.resp.codex{background:#eef0f7}
+.codex-card.st-완료{border-color:#a9c7ae}
+.resp{margin-top:8px}

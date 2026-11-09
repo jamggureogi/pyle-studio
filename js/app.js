@@ -8,15 +8,19 @@ import * as character from './rooms/character.js';
 import * as system from './rooms/system.js';
 import * as maproom from './rooms/map.js';
 import * as decide from './rooms/decide.js';
+import * as review from './rooms/review.js';
+import * as codex from './rooms/codex.js';
 
 export const ROOMS = [
   { id: 'home', name: '홈', ico: '🏠', mod: home },
   { id: 'decide', name: '결정', ico: '🗳', mod: decide },
+  { id: 'review', name: '확인', ico: '🖼', mod: review },
   { id: 'scenario', name: '시나리오', ico: '📜', mod: scenario },
   { id: 'system', name: '시스템', ico: '⚔️', mod: system },
   { id: 'character', name: '캐릭터', ico: '🧑', mod: character },
   { id: 'story', name: '스토리', ico: '🎬', mod: story },
   { id: 'map', name: '맵', ico: '🗺️', mod: maproom },
+  { id: 'codex', name: '코덱스', ico: '🤝', mod: codex },
   { id: 'requests', name: '요청함', ico: '📮', mod: requests },
 ];
 export const roomName = id => ROOMS.find(r => r.id === id)?.name || id;
@@ -139,14 +143,19 @@ function buildShell() {
 
 async function updateBadges() {
   try {
-    const [{ data }, dec] = await Promise.all([store.getJSON('data/requests.json', { requests: [] }), store.getJSON('data/decisions.json', { decisions: [] }).catch(() => ({ data: { decisions: [] } }))]);
+    const safe = (path, fb) => store.getJSON(path, fb).catch(() => ({ data: fb }));
+    const [{ data }, dec, rev, cx] = await Promise.all([safe('data/requests.json', { requests: [] }), safe('data/decisions.json', { decisions: [] }), safe('data/review.json', { items: [] }), safe('data/codex_tasks.json', { tasks: [] })]);
+    const special = {
+      decide: (dec.data.decisions || []).filter(d => d.status === '대기').length,
+      review: (rev.data.items || []).filter(x => x.status === '확인 대기').length,
+      codex: (cx.data.tasks || []).filter(t => ['완료', '질문'].includes(t.status)).length,
+    };
     const waiting = (data.requests || []).filter(r => r.status === '대기' || r.status === '진행중');
-    const decWaiting = (dec.data.decisions || []).filter(d => d.status === '대기').length;
     const count = room => waiting.filter(r => room === 'requests' || r.room === room).length;
     for (const r of ROOMS) {
       const b = navLinks[r.id]?.querySelector('.badge');
       if (!b) continue;
-      const n = r.id === 'home' ? 0 : r.id === 'decide' ? decWaiting : count(r.id);
+      const n = r.id === 'home' ? 0 : r.id in special ? special[r.id] : count(r.id);
       b.textContent = n;
       b.style.display = n ? '' : 'none';
     }
