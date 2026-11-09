@@ -7,9 +7,11 @@ import * as story from './rooms/story.js';
 import * as character from './rooms/character.js';
 import * as system from './rooms/system.js';
 import * as maproom from './rooms/map.js';
+import * as decide from './rooms/decide.js';
 
 export const ROOMS = [
   { id: 'home', name: '홈', ico: '🏠', mod: home },
+  { id: 'decide', name: '결정', ico: '🗳', mod: decide },
   { id: 'scenario', name: '시나리오', ico: '📜', mod: scenario },
   { id: 'system', name: '시스템', ico: '⚔️', mod: system },
   { id: 'character', name: '캐릭터', ico: '🧑', mod: character },
@@ -137,13 +139,14 @@ function buildShell() {
 
 async function updateBadges() {
   try {
-    const { data } = await store.getJSON('data/requests.json', { requests: [] });
+    const [{ data }, dec] = await Promise.all([store.getJSON('data/requests.json', { requests: [] }), store.getJSON('data/decisions.json', { decisions: [] }).catch(() => ({ data: { decisions: [] } }))]);
     const waiting = (data.requests || []).filter(r => r.status === '대기' || r.status === '진행중');
+    const decWaiting = (dec.data.decisions || []).filter(d => d.status === '대기').length;
     const count = room => waiting.filter(r => room === 'requests' || r.room === room).length;
     for (const r of ROOMS) {
       const b = navLinks[r.id]?.querySelector('.badge');
       if (!b) continue;
-      const n = r.id === 'home' ? 0 : count(r.id);
+      const n = r.id === 'home' ? 0 : r.id === 'decide' ? decWaiting : count(r.id);
       b.textContent = n;
       b.style.display = n ? '' : 'none';
     }

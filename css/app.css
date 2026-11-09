@@ -248,3 +248,27 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .savebar{flex-wrap:wrap}
 .savebar select{max-width:100%}
 .hidden-user{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+
+/* decisions */
+.decision .did{font-size:12px;font-weight:700;color:#fff;background:#6b7d6f;border-radius:6px;padding:2px 7px}
+.decision.답변됨{border-color:#b9cbe0}
+.decision.결정됨{opacity:.85}
+.decision .ctx{color:#555;font-size:14px;margin:8px 0 4px}
+.small-link{font-size:13px}
+.opts{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.opt{display:flex;gap:10px;align-items:flex-start;text-align:left;border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:10px 12px;width:100%}
+.opt:hover:not(:disabled){border-color:#bdb39f}
+.opt.on{border-color:var(--accent);background:#eef4ef}
+.opt:disabled{cursor:default}
+.opt:disabled:not(.on){opacity:.55}
+.opt .mark{width:20px;height:20px;border:2px solid #b5ad9c;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--accent);margin-top:2px}
+.opt .mark.radio{border-radius:50%}
+.opt .mark.box{border-radius:5px}
+.opt.on .mark{border-color:var(--accent)}
+.opt-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.opt-title{font-weight:600}
+.opt-desc{font-size:13px;color:#666}
+.rec-badge{font-size:11px;font-weight:600;background:#f3e3bf;border-radius:8px;padding:1px 7px;margin-left:6px}
+.decision textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;resize:vertical}
+.side nav{overflow-x:auto}
+.opt:disabled{color:inherit}

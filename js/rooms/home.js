@@ -7,11 +7,7 @@ export async function render(ctx) {
     ctx.store.getJSON('data/requests.json', { requests: [] }).then(r => r.data.requests || []).catch(() => []),
     ctx.store.getJSON('data/asset_registry.json', { assets: [] }).then(r => r.data.assets || []).catch(() => []),
     ctx.store.commits(12).catch(() => []),
-    ctx.store.getText('docs/결정대기.md').then(f => {
-      const t = f?.text || '';
-      const waiting = t.split('## ✅')[0];
-      return [...waiting.matchAll(/^### (D-\d+)\s+(.*)$/gm)].map(m => ({ id: m[1], title: m[2] }));
-    }).catch(() => []),
+    ctx.store.getJSON('data/decisions.json', { decisions: [] }).then(r => (r.data.decisions || []).filter(d => d.status === '대기')).catch(() => []),
   ]);
   const by = s => reqs.filter(r => r.status === s);
   const candidates = assets.filter(a => a.status === '후보');
@@ -27,13 +23,13 @@ export async function render(ctx) {
       stat(by('진행중').length, '진행 중', 'info', '#/requests'),
       stat(by('완료').length, '완료', 'ok', '#/requests'),
       stat(candidates.length, '승인 대기 그림', 'danger', '#/character/library/후보'),
-      stat(decisions.length, '결정 대기', 'warn', '#/scenario/docs/docs/결정대기.md'),
+      stat(decisions.length, '결정 대기', 'warn', '#/decide'),
     ),
     h('div', { class: 'grid' },
       h('div', { class: 'card' },
         h('h2', {}, '🗳 결정해 주세요'),
         decisions.length
-          ? h('ul', { class: 'list' }, decisions.map(d => h('li', {}, h('a', { href: '#/scenario/docs/docs/결정대기.md' }, h('b', {}, d.id), ' ', d.title))))
+          ? h('ul', { class: 'list' }, decisions.map(d => h('li', {}, h('a', { href: '#/decide' }, h('b', {}, d.id), ' ', d.title))))
           : h('div', { class: 'empty' }, '결정할 것이 없어요.')),
       h('div', { class: 'card' },
         h('h2', {}, '📮 대기 중인 요청'),
