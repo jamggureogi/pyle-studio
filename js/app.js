@@ -63,7 +63,7 @@ async function connectWith(token, repoStr) {
 async function rememberInBrowser(token) {
   try {
     if ('PasswordCredential' in window) {
-      await navigator.credentials.store(new PasswordCredential({ id: 'pyle-studio', password: token, name: '신관전승 편집실' }));
+      await navigator.credentials.store(new PasswordCredential({ id: 'pyle-studio', password: token, name: '신광전승 편집실' }));
     }
   } catch { /* the browser may refuse; the normal form save prompt still works */ }
 }
@@ -104,14 +104,14 @@ function setupPage() {
   autoFillFromBrowser().then(t => { if (t && !tokenIn.value) { tokenIn.value = t; toast('브라우저에 저장된 열쇠를 불러왔어요. "연결하기"를 눌러 주세요.'); } });
   return h('div', { class: 'setup' },
     h('div', { class: 'card' },
-      h('h1', {}, '신관전승 편집실'),
+      h('h1', {}, '신광전승 편집실'),
       h('p', { class: 'muted' }, '열쇠(GitHub 토큰)로 연결해요. 연결할 때 브라우저가 "비밀번호를 저장할까요?"라고 물으면 ', h('b', {}, '저장'), '을 눌러 주세요. 같은 브라우저 계정(구글·마이크로소프트 등)으로 로그인한 다른 컴퓨터에서는 열쇠가 자동으로 채워져요.'),
       form),
     h('div', { class: 'card' },
       h('h2', {}, '열쇠 만드는 방법'),
       h('ol', {},
         h('li', {}, h('a', { href: 'https://github.com/settings/personal-access-tokens/new', target: '_blank' }, 'GitHub 토큰 만들기 페이지'), '를 여세요.'),
-        h('li', {}, 'Token name: ', h('b', {}, '신관전승 편집실'), ' / Expiration: 원하는 기간'),
+        h('li', {}, 'Token name: ', h('b', {}, '신광전승 편집실'), ' / Expiration: 원하는 기간'),
         h('li', {}, 'Repository access: ', h('b', {}, 'Only select repositories'), ' → ', h('b', {}, 'pyle_claude'), ' 선택'),
         h('li', {}, 'Permissions에서 ', h('b', {}, '+ Add permissions'), ' → ', h('b', {}, 'Contents'), ' 체크 → 권한을 ', h('b', {}, 'Read and write'), '로 변경 (Metadata는 자동으로 추가돼요)'),
         h('li', {}, '맨 아래 ', h('b', {}, 'Generate token'), ' → 나온 열쇠를 위 칸에 붙여넣기')),
@@ -134,7 +134,7 @@ function buildShell() {
   shellMain = h('main', { class: 'main' });
   app.replaceChildren(h('div', { class: 'shell' },
     h('aside', { class: 'side' },
-      h('div', { class: 'brand' }, '신관전승', h('small', {}, '통합 편집실')),
+      h('div', { class: 'brand' }, '신광전승', h('small', {}, '통합 편집실')),
       nav,
       h('div', { class: 'foot' }, store.label, h('br'), h('a', { href: '#', onclick: e => { e.preventDefault(); ctx.logout(); } }, '로그아웃')),
     ),

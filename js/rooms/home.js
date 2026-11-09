@@ -16,7 +16,7 @@ export async function render(ctx) {
       h('div', { style: { fontSize: '28px', fontWeight: 700 } }, n), h('span', { class: `badge ${cls}` }, label)));
 
   return h('div', { class: 'page' },
-    h('h1', {}, '신관전승 편집실'),
+    h('h1', {}, '신광전승 편집실'),
     h('p', { class: 'sub' }, '게임의 모든 자료를 여기서 보고 고쳐요. 여기서 저장한 내용은 Claude와 게임이 같이 봐요.'),
     h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', marginBottom: '14px' } },
       stat(by('대기').length, '요청 대기', 'warn', '#/requests'),

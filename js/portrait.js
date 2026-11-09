@@ -95,7 +95,8 @@ export function portraitLayer(url, char, emotion) {
       masks.push(`linear-gradient(to right, #000 ${start.toFixed(1)}%, transparent ${end.toFixed(1)}%)`);
     }
     const bottom = r.top + r.height;
-    if (bottom < boxBottom - 2) masks.push(`linear-gradient(to bottom, #000 ${(100 - 1200 / r.height).toFixed(1)}%, transparent 100%)`);
+    // the picture ends inside the box: let it dissolve over its last ~14% instead of a hard line
+    if (bottom < boxBottom - 2) masks.push(`linear-gradient(to bottom, #000 86%, transparent 100%)`);
     const m = masks.join(', ');
     img.style.maskImage = img.style.webkitMaskImage = m || '';
     img.style.maskComposite = masks.length > 1 ? 'intersect' : '';
