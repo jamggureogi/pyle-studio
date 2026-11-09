@@ -296,3 +296,4 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .hover-preview img{width:100%;display:block;border-radius:7px}
 .step>.cmd .cg-picker input.dur{flex:0 0 64px;width:64px}
 .cg-picker>.row{flex-wrap:nowrap}
+.decision.leaving{transition:opacity .4s, transform .4s;opacity:0;transform:translateX(30px)}
