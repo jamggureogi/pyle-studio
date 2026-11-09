@@ -169,9 +169,11 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .modal-bg.pv{background:rgba(0,0,0,.75)}
 .pv-stage{position:relative;width:min(960px,100%);aspect-ratio:16/9;background:#1d2420;border-radius:10px;overflow:hidden;cursor:pointer}
 .pv-scene{position:absolute;inset:0;background-size:cover;background-position:center}
-.pv-box{position:absolute;left:3%;right:3%;bottom:12%;min-height:26%;background:rgba(20,26,22,.88);border:2px solid #c9b98a;border-radius:10px;color:#f4efe2;padding:14px 18px 14px 25%}
+.pv-box{position:absolute;left:3%;right:3%;bottom:10%;height:28%;box-sizing:border-box;background:rgba(20,26,22,.88);border:2px solid #c9b98a;border-radius:10px;color:#f4efe2;padding:14px 18px 14px 28%;z-index:1}
+.pv-box.noportrait{padding-left:3%}
 .pv-box.dir{padding-left:18px;font-style:italic;color:#cfd8cf}
-.pv-portrait{position:absolute;left:1%;bottom:0;width:22%;max-height:170%;object-fit:contain;object-position:bottom}
+.pv-pclip{position:absolute;left:0;top:0;overflow:hidden;pointer-events:none;z-index:2;-webkit-mask-image:linear-gradient(to right,#000 86%,transparent);mask-image:linear-gradient(to right,#000 86%,transparent)}
+.pv-pimg{position:absolute;max-width:none}
 .pv-name{font-weight:700;color:#e8d49a;margin-bottom:4px}
 .pv-text{font-size:clamp(14px,2.2vw,19px);line-height:1.6;white-space:pre-wrap}
 .pv-bar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:6px;align-items:center;padding:6px 10px;color:#ccc;font-size:12px;background:rgba(0,0,0,.4)}
@@ -297,3 +299,18 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .step>.cmd .cg-picker input.dur{flex:0 0 64px;width:64px}
 .cg-picker>.row{flex-wrap:nowrap}
 .decision.leaving{transition:opacity .4s, transform .4s;opacity:0;transform:translateX(30px)}
+.pv-bar{z-index:3}
+.pv-stage.mock{width:100%;max-width:560px;cursor:default;background:linear-gradient(#5b6e62,#2f3a33)}
+.fit-wrap{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;margin-top:8px}
+.fit-wrap .pv-stage.mock{flex:1 1 360px}
+.fit-controls{flex:1 1 220px;min-width:220px}
+.fit-row{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px}
+.fit-label{width:72px;color:var(--muted)}
+.fit-row input[type=range]{flex:1}
+.compare-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.compare-grid .pv-stage.mock{max-width:none}
+.modal:has(.compare-grid){width:min(1000px,100%)}
+@media (max-width:700px){.compare-grid{grid-template-columns:1fr}}
+.compare-grid.three{grid-template-columns:repeat(3,1fr)}
+.modal:has(.compare-grid.three){width:min(1200px,100%)}
+@media (max-width:900px){.compare-grid.three{grid-template-columns:1fr 1fr}}

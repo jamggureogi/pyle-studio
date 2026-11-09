@@ -3,6 +3,7 @@ import { h, toast, loading, errorBox, confirmBox, modal, closeModal } from '../u
 import { requestPanel, newId } from './requests.js';
 import { makeDraggable, moveInArray } from '../drag.js';
 import { loadRegistry, updateRegistry } from '../assets.js';
+import { portraitLayer } from '../portrait.js';
 
 const FILE = 'data/story/prologue.json';
 const CHARS = 'data/characters.json';
@@ -586,11 +587,11 @@ async function preview(s) {
     const scene = h('div', { class: `pv-scene ${missing ? 'pv-missing' : ''}`, style: cg ? { backgroundImage: `url(${cg})` } : {} }, missing && `🖼 일러스트 준비 중: ${missing}`);
     if (st.kind === 'cmd' && st.op === 'flash') { stage.classList.remove('pv-flash'); void stage.offsetWidth; stage.classList.add('pv-flash'); }
     if (st.kind === 'cmd' && st.op === 'shake') { stage.classList.remove('pv-shake'); void stage.offsetWidth; stage.classList.add('pv-shake'); }
-    let box;
+    let box, layer = null;
     if (st.kind === 'line') {
       const url = await portraitUrl(st.speaker, st.emotion);
-      box = h('div', { class: 'pv-box' },
-        url && h('img', { class: 'pv-portrait', src: url }),
+      if (url) layer = portraitLayer(url, charOf(st.speaker), st.emotion);
+      box = h('div', { class: `pv-box ${url ? '' : 'noportrait'}` },
         h('div', { class: 'pv-name' }, speakerName(st)),
         h('div', { class: 'pv-text' }, st.text || '(빈 대사)'));
     } else if (st.kind === 'direction') {
@@ -598,7 +599,7 @@ async function preview(s) {
     } else {
       box = h('div', { class: 'pv-box dir' }, h('div', { class: 'pv-text' }, `[${OPS[st.op] || st.op}] ${Object.values(st.args || {}).join(' ')}`));
     }
-    stage.replaceChildren(scene, box,
+    stage.replaceChildren(...[scene, box, layer].filter(Boolean),
       h('div', { class: 'pv-bar' }, h('span', {}, `${i} / ${steps.length}`), h('span', { class: 'spacer' }),
         h('button', { class: 'btn small', onclick: e => { e.stopPropagation(); i = Math.max(0, i - 2); next(); } }, '◀ 이전'),
         h('button', { class: 'btn small primary', onclick: e => { e.stopPropagation(); next(); } }, '다음 ▶'),

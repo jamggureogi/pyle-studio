@@ -1,5 +1,6 @@
 // Character room: people (portraits by expression), the image library with approval, and bulk upload.
 import { h, toast, modal, confirmBox, closeModal } from '../ui.js';
+import { portraitLayer, frameFor } from '../portrait.js';
 import { requestPanel } from './requests.js';
 import {
   KINDS, STATUSES, statusClass, CHARS, loadRegistry, updateRegistry, uploadAssets, uploadSources, findDuplicates, thumb, spritePlayer, viewImage,
@@ -62,7 +63,85 @@ async function peopleView(ctx, id) {
       h('span', { class: 'name' }, c.name, c.displayName && h('small', { class: 'muted' }, ` (${c.displayName})`)),
       n ? h('span', { class: 'badge warn' }, n) : null);
   }));
-  return h('div', { class: 'split' }, side, personPage(ctx, cur, chars, assets));
+  return h('div', {},
+    h('div', { class: 'row', style: { marginBottom: '10px' } }, h('button', { class: 'btn small', onclick: () => compareAll(ctx, chars) }, '👥 대화창 키 한눈에 비교')),
+    h('div', { class: 'split' }, side, personPage(ctx, cur, chars, assets)));
+}
+
+// A small dialogue-box stage with one portrait, used for fitting and comparing.
+function mockStage(ctx, c, emotion, name, text = '대사창에서는 이 크기로 보여요.') {
+  const stage = h('div', { class: 'pv-stage mock' },
+    h('div', { class: 'pv-box' }, h('div', { class: 'pv-name' }, name || c.displayName || c.name), h('div', { class: 'pv-text' }, text)));
+  const file = c.portraits?.[emotion];
+  if (file) ctx.store.blobUrl(file).then(u => { const layer = portraitLayer(u, c, emotion); stage.append(layer); stage._layer = layer; });
+  return stage;
+}
+
+function fitCard(ctx, c, chars) {
+  const emotions = chars.emotions || {};
+  const emos = Object.keys(c.portraits);
+  let emo = emos.includes('normal') ? 'normal' : emos[0];
+  const own = () => c.portraitFrames?.[emo];
+  const box = h('div');
+  const draw = () => {
+    const f = frameFor(c, emo);
+    const stage = mockStage(ctx, c, emo);
+    const refit = () => stage._layer?._fit();
+    const slider = (key, label, min, max, step, fmt) => {
+      const val = h('span', { class: 'muted', style: { width: '48px', textAlign: 'right' } }, fmt(f[key]));
+      const r = h('input', { type: 'range', min, max, step, value: f[key] });
+      r.oninput = () => {
+        c.portraitFrames ||= {};
+        c.portraitFrames[emo] = { ...(c.portraitFrames[emo] || {}), [key]: Number(r.value) };
+        val.textContent = fmt(Number(r.value));
+        refit();
+      };
+      return h('label', { class: 'fit-row' }, h('span', { class: 'fit-label' }, label), r, val);
+    };
+    const pct = v => `${Math.round(v * 100)}%`;
+    const emoSel = h('select', {}, emos.map(e => h('option', { value: e, selected: e === emo }, emotions[e] || e)));
+    emoSel.onchange = () => { emo = emoSel.value; draw(); };
+    const save = async allEmotions => {
+      const cur = frameFor(c, emo);
+      try {
+        await ctx.store.updateJSON(CHARS, d => {
+          const x = d.characters.find(y => y.id === c.id);
+          if (!x) return d;
+          if (allEmotions) { x.portraitFrame = cur; delete x.portraitFrames; c.portraitFrame = cur; delete c.portraitFrames; }
+          else { (x.portraitFrames ||= {})[emo] = cur; }
+          return d;
+        }, `대화창 초상화 맞춤: ${c.name} ${allEmotions ? '전체' : emo}`);
+        toast(allEmotions ? '모든 표정에 같은 값으로 저장했어요.' : `"${emotions[emo] || emo}" 표정만 저장했어요.`);
+        draw();
+      } catch (e) { toast(e.message, true); }
+    };
+    box.replaceChildren(
+      h('div', { class: 'row' }, h('b', {}, '표정'), emoSel, own() && h('span', { class: 'badge info' }, '이 표정만 따로 맞춤')),
+      h('div', { class: 'fit-wrap' }, stage,
+        h('div', { class: 'fit-controls' },
+          slider('scale', '크기', 0.6, 1.6, 0.01, pct),
+          slider('dx', '좌우', -0.08, 0.08, 0.002, v => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}`),
+          slider('dy', '위아래', -0.15, 0.15, 0.002, v => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}`),
+          h('details', {}, h('summary', { class: 'muted' }, '얼굴 위치 (고급)'),
+            slider('eye', '눈 높이', 0, 1, 0.005, pct), slider('chin', '턱 높이', 0, 1, 0.005, pct), slider('cx', '얼굴 가운데', 0, 1, 0.005, pct)),
+          h('div', { class: 'row', style: { marginTop: '8px' } },
+            h('button', { class: 'btn small primary', onclick: () => save(false) }, '이 표정만 저장'),
+            h('button', { class: 'btn small', onclick: () => save(true) }, '모든 표정에 적용')))));
+  };
+  draw();
+  return h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, '대화창 맞추기'), h('span', { class: 'spacer' }), h('button', { class: 'btn small', onclick: () => compareEmotions(ctx, c, chars) }, '표정별 한눈에 보기')),
+    h('p', { class: 'muted', style: { fontSize: '13px', margin: '0 0 8px' } }, '모든 인물은 눈~턱 길이가 같아지도록 자동으로 맞춰져요. 어색하면 슬라이더로 조정하고 저장하세요.'), box);
+}
+
+export async function compareEmotions(ctx, c, chars) {
+  const grid = h('div', { class: 'compare-grid three' }, Object.keys(c.portraits || {}).map(e => mockStage(ctx, c, e, null, chars.emotions?.[e] || e)));
+  await modal(`${c.name} · 표정별 비교`, grid);
+}
+
+async function compareAll(ctx, chars) {
+  const grid = h('div', { class: 'compare-grid' },
+    chars.characters.filter(c => c.portraits?.normal).map(c => mockStage(ctx, c, 'normal', null, c.name)));
+  await modal('대화창 키 비교 (기본 표정)', grid);
 }
 
 function personPage(ctx, c, chars, assets) {
@@ -81,6 +160,7 @@ function personPage(ctx, c, chars, assets) {
       h('h2', {}, '대화 초상화 (표정별)'),
       Object.keys(c.portraits || {}).length ? portraitGrid : h('div', { class: 'empty' }, '아직 초상화가 없어요. 그림 올리기에서 올리고 승인한 뒤 "표정 초상화로 지정"을 눌러 주세요.'),
       h('p', { class: 'muted', style: { fontSize: '12px' } }, '지금은 이전 편집실의 작은 미리보기 그림이에요. 원본 크기 그림을 올리면 교체할 수 있어요.')),
+    Object.keys(c.portraits || {}).length ? fitCard(ctx, c, chars) : null,
     h('div', { class: 'card' },
       h('h2', {}, '이 인물의 등록 그림'),
       mine.length ? Object.entries(byKind).map(([k, arr]) => [h('h4', { class: 'muted' }, KINDS[k] || k), assetGrid(ctx, arr, chars)])
