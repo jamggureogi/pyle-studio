@@ -2,7 +2,7 @@
 import { h, toast, modal, confirmBox, closeModal } from '../ui.js';
 import { requestPanel } from './requests.js';
 import {
-  KINDS, STATUSES, statusClass, CHARS, loadRegistry, updateRegistry, uploadAssets, thumb, spritePlayer, viewImage,
+  KINDS, STATUSES, statusClass, CHARS, loadRegistry, updateRegistry, uploadAssets, findDuplicates, thumb, spritePlayer, viewImage,
 } from '../assets.js';
 
 const SPRITE_KINDS = ['field', 'battle', 'cutin', 'effect'];
@@ -238,6 +238,7 @@ function uploadView(ctx) {
       items.push({ file, kind: guessKind(file.name), owner: guessOwner(file.name), note: '', url: URL.createObjectURL(file) });
     }
     draw();
+    findDuplicates(ctx.store, items).then(draw).catch(() => {});
   };
   const draw = () => {
     btn.disabled = !items.length;
@@ -251,7 +252,9 @@ function uploadView(ctx) {
       return h('div', { class: 'upload-item' },
         h('div', { class: 'thumb checker' }, h('img', { src: it.url })),
         h('div', { class: 'upload-fields' },
-          h('div', { class: 'row' }, h('b', {}, it.file.name), h('span', { class: 'muted' }, `${(it.file.size / 1024 / 1024).toFixed(1)}MB`)),
+          h('div', { class: 'row' }, h('b', {}, it.file.name), h('span', { class: 'muted' }, `${(it.file.size / 1024 / 1024).toFixed(1)}MB`),
+            it.dupOf && h('span', { class: 'badge danger' }, `이미 있는 그림: ${it.dupOf.id} (${it.dupOf.status}) → 건너뜀`),
+            it.dupInBatch && h('span', { class: 'badge danger' }, `같은 그림을 두 번 넣음 (${it.dupInBatch}) → 건너뜀`)),
           h('div', { class: 'row' }, kind, owner, note)),
         h('button', { class: 'btn small danger', onclick: () => { items.splice(i, 1); draw(); } }, '빼기'));
     }));
@@ -259,9 +262,11 @@ function uploadView(ctx) {
   btn.onclick = async () => {
     btn.disabled = true;
     try {
+      const total = items.length;
       const added = await uploadAssets(ctx.store, items, (i, n, name) => status.textContent = `올리는 중 ${i + 1}/${n}: ${name}`);
       status.textContent = '';
-      toast(`${added.length}장을 후보로 올렸어요. 그림 보관함에서 승인할 수 있어요.`);
+      const skipped = total - added.length;
+      toast(`${added.length}장을 후보로 올렸어요.${skipped ? ` 이미 있는 그림 ${skipped}장은 건너뛰었어요.` : ''}`);
       ctx.refreshBadges();
       ctx.go('#/character/library/후보');
     } catch (e) { toast(e.message, true); btn.disabled = false; status.textContent = ''; }

@@ -28,6 +28,26 @@ export function safeName(name, fallback) {
   return `${base}.${ext}`;
 }
 
+// Content fingerprint: the same picture gives the same value whatever its file name.
+export async function sha256Hex(buf) {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+  return [...d].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Mark items whose content already exists in the registry (or twice in this batch).
+export async function findDuplicates(store, items) {
+  const reg = await loadRegistry(store);
+  const known = new Map(reg.filter(a => a.sha256).map(a => [a.sha256, a]));
+  const seen = new Map();
+  for (const it of items) {
+    it.sha256 ||= await sha256Hex(await it.file.arrayBuffer());
+    it.dupOf = known.get(it.sha256) || null;
+    it.dupInBatch = seen.has(it.sha256) ? seen.get(it.sha256) : null;
+    if (!seen.has(it.sha256)) seen.set(it.sha256, it.file.name);
+  }
+  return items;
+}
+
 export function fileToB64(file) {
   return file.arrayBuffer().then(buf => bytesToB64(new Uint8Array(buf)));
 }
@@ -35,6 +55,8 @@ export function fileToB64(file) {
 // Upload files to assets/_inbox and register them as candidates in one registry commit.
 export async function uploadAssets(store, items, onProgress) {
   const today = new Date().toISOString().slice(0, 10);
+  await findDuplicates(store, items);
+  items = items.filter(it => !it.dupOf && !it.dupInBatch);
   const existing = new Set((await loadRegistry(store)).map(a => a.file));
   const added = [];
   for (let i = 0; i < items.length; i++) {
@@ -47,7 +69,7 @@ export async function uploadAssets(store, items, onProgress) {
     await store.putBinary(path, await fileToB64(it.file), null, `그림 올리기: ${path.split('/').pop()}`);
     added.push({
       id: path.split('/').pop().replace(/\.\w+$/, ''), kind: it.kind, ...(it.owner ? { owner: it.owner } : {}),
-      file: path, status: '후보', note: it.note || '', createdBy: '사용자', createdAt: today,
+      file: path, status: '후보', note: it.note || '', createdBy: '사용자', createdAt: today, sha256: it.sha256,
     });
   }
   await updateRegistry(store, list => list.push(...added), `그림 ${added.length}장 후보 등록`);
