@@ -121,3 +121,30 @@ export async function viewImage(store, file, title, extra) {
   img.onload = () => info.textContent = `${file} · ${img.naturalWidth}×${img.naturalHeight}px`;
   return modal(title, h('div', {}, h('div', { class: 'checker' }, img), info, extra || null));
 }
+
+// Raw source files for Claude to process (sheets to cut, originals from Drive, etc.).
+// They go to assets/_source/<folder>/ and are NOT registered as candidates; a request tells Claude.
+export async function uploadSources(store, files, folder, note, onProgress) {
+  const dir = `assets/_source/${folder}`;
+  const existing = new Set((await store.list(dir)).map(f => f.name));
+  const saved = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    let name = safeName(f.name, `source_${Date.now().toString(36)}`);
+    for (let n = 2; existing.has(name); n++) name = name.replace(/(_\d+)?(\.\w+)$/, `_${n}$2`);
+    existing.add(name);
+    onProgress?.(i, files.length, f.name);
+    await store.putBinary(`${dir}/${name}`, await fileToB64(f), null, `원본 올리기: ${dir}/${name}`);
+    saved.push(name);
+  }
+  const now = new Date().toISOString();
+  await store.updateJSON('data/requests.json', d => {
+    (d.requests ||= []).unshift({
+      id: 'req_' + Date.now().toString(36), room: 'character', title: `원본 가공: ${dir} (${saved.length}개)`,
+      body: `${note ? note + '\n' : ''}올린 위치: ${dir}/\n파일: ${saved.join(', ')}`,
+      status: '대기', createdAt: now, updatedAt: now, createdBy: '사용자', response: '',
+    });
+    return d;
+  }, `요청 추가: 원본 가공 ${dir}`, { requests: [] });
+  return { dir, saved };
+}

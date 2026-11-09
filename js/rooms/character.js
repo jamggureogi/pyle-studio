@@ -2,7 +2,7 @@
 import { h, toast, modal, confirmBox, closeModal } from '../ui.js';
 import { requestPanel } from './requests.js';
 import {
-  KINDS, STATUSES, statusClass, CHARS, loadRegistry, updateRegistry, uploadAssets, findDuplicates, thumb, spritePlayer, viewImage,
+  KINDS, STATUSES, statusClass, CHARS, loadRegistry, updateRegistry, uploadAssets, uploadSources, findDuplicates, thumb, spritePlayer, viewImage,
 } from '../assets.js';
 
 const SPRITE_KINDS = ['field', 'battle', 'cutin', 'effect'];
@@ -211,6 +211,22 @@ async function assetDetail(ctx, a, chars) {
 // ---------- upload ----------
 function uploadView(ctx) {
   const items = [];
+  let mode = 'asset';
+  const folderIn = h('input', { placeholder: '폴더 이름 (예: portraits, tiles_v1)', value: 'portraits' });
+  const noteIn = h('textarea', { rows: 2, placeholder: 'Claude에게 할 말 (예: 드라이브 01-게임사용본 원본이야. 표정별로 잘라서 교체해 줘)' });
+  const modeBox = h('div', { class: 'card' });
+  const drawMode = () => {
+    modeBox.replaceChildren(
+      h('div', { class: 'tool-row' },
+        h('button', { class: `btn small ${mode === 'asset' ? 'primary' : ''}`, onclick: () => { mode = 'asset'; drawMode(); draw(); } }, '바로 쓸 그림 (후보로 등록)'),
+        h('button', { class: `btn small ${mode === 'source' ? 'primary' : ''}`, onclick: () => { mode = 'source'; drawMode(); draw(); } }, 'Claude가 가공할 원본')),
+      mode === 'source'
+        ? h('div', { style: { marginTop: '10px' } },
+            h('p', { class: 'muted', style: { fontSize: '13px', margin: '0 0 8px' } }, '여러 표정이 한 장에 있는 시트, 드라이브의 원본처럼 Claude가 잘라내거나 정리해야 하는 파일이에요. 저장소의 assets/_source/폴더이름/ 에 그대로 보관되고, 요청함에 가공 요청이 자동으로 남아요.'),
+            h('label', { class: 'field' }, h('span', {}, '폴더 이름'), folderIn),
+            h('label', { class: 'field' }, h('span', {}, 'Claude에게 할 말'), noteIn))
+        : h('p', { class: 'muted', style: { fontSize: '13px', margin: '8px 0 0' } }, '게임에 바로 쓸 수 있는 그림이에요. 후보로 등록되고, 그림 보관함에서 승인하면 사용돼요.'));
+  };
   const list = h('div', { class: 'upload-list' });
   const btn = h('button', { class: 'btn primary', disabled: true }, '올리기');
   const status = h('span', { class: 'muted' });
@@ -233,12 +249,12 @@ function uploadView(ctx) {
 
   const add = files => {
     for (const file of files) {
-      if (!file.type.startsWith('image/')) { toast(`${file.name}: 그림 파일만 올릴 수 있어요.`, true); continue; }
+      if (mode === 'asset' && !file.type.startsWith('image/')) { toast(`${file.name}: 그림 파일만 올릴 수 있어요. (zip 등은 "Claude가 가공할 원본"으로)`, true); continue; }
       if (file.size > 25 * 1024 * 1024) { toast(`${file.name}: 25MB보다 커요.`, true); continue; }
-      items.push({ file, kind: guessKind(file.name), owner: guessOwner(file.name), note: '', url: URL.createObjectURL(file) });
+      items.push({ file, kind: guessKind(file.name), owner: guessOwner(file.name), note: '', url: file.type.startsWith('image/') ? URL.createObjectURL(file) : null });
     }
     draw();
-    findDuplicates(ctx.store, items).then(draw).catch(() => {});
+    if (mode === 'asset') findDuplicates(ctx.store, items).then(draw).catch(() => {});
   };
   const draw = () => {
     btn.disabled = !items.length;
@@ -250,17 +266,28 @@ function uploadView(ctx) {
       const note = h('input', { placeholder: '메모 (선택)', value: it.note });
       note.oninput = () => it.note = note.value;
       return h('div', { class: 'upload-item' },
-        h('div', { class: 'thumb checker' }, h('img', { src: it.url })),
+        h('div', { class: 'thumb checker' }, it.url ? h('img', { src: it.url }) : h('span', { class: 'muted' }, '📦')),
         h('div', { class: 'upload-fields' },
           h('div', { class: 'row' }, h('b', {}, it.file.name), h('span', { class: 'muted' }, `${(it.file.size / 1024 / 1024).toFixed(1)}MB`),
             it.dupOf && h('span', { class: 'badge danger' }, `이미 있는 그림: ${it.dupOf.id} (${it.dupOf.status}) → 건너뜀`),
             it.dupInBatch && h('span', { class: 'badge danger' }, `같은 그림을 두 번 넣음 (${it.dupInBatch}) → 건너뜀`)),
-          h('div', { class: 'row' }, kind, owner, note)),
+          mode === 'asset' && h('div', { class: 'row' }, kind, owner, note)),
         h('button', { class: 'btn small danger', onclick: () => { items.splice(i, 1); draw(); } }, '빼기'));
     }));
   };
   btn.onclick = async () => {
     btn.disabled = true;
+    if (mode === 'source') {
+      const folder = (folderIn.value.trim() || 'misc').toLowerCase().replace(/[^a-z0-9_-]+/g, '_');
+      try {
+        const { dir, saved } = await uploadSources(ctx.store, items.map(i => i.file), folder, noteIn.value.trim(), (i, n, name) => status.textContent = `올리는 중 ${i + 1}/${n}: ${name}`);
+        status.textContent = '';
+        toast(`${saved.length}개를 ${dir}/ 에 올리고 요청함에 가공 요청을 남겼어요. Claude에게 "요청함 처리해줘"라고 말해 주세요.`);
+        ctx.refreshBadges();
+        ctx.go('#/character/requests');
+      } catch (e) { toast(e.message, true); btn.disabled = false; status.textContent = ''; }
+      return;
+    }
     try {
       const total = items.length;
       const added = await uploadAssets(ctx.store, items, (i, n, name) => status.textContent = `올리는 중 ${i + 1}/${n}: ${name}`);
@@ -272,15 +299,16 @@ function uploadView(ctx) {
     } catch (e) { toast(e.message, true); btn.disabled = false; status.textContent = ''; }
   };
 
-  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, style: { display: 'none' } });
+  const input = h('input', { type: 'file', multiple: true, style: { display: 'none' } });
   input.onchange = () => { add(input.files); input.value = ''; };
   const zone = h('div', { class: 'dropzone', onclick: () => input.click() },
     h('div', { style: { fontSize: '28px' } }, '🖼'),
     h('b', {}, '여기에 그림 파일을 끌어다 놓거나 눌러서 고르세요'),
-    h('div', { class: 'muted' }, '여러 장을 한 번에 올릴 수 있어요. 올린 그림은 "후보"로 등록돼요.'));
+    h('div', { class: 'muted' }, '여러 개를 한 번에 올릴 수 있어요. 원본 모드에서는 zip 파일도 돼요.'));
   zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('over'); });
   zone.addEventListener('dragleave', () => zone.classList.remove('over'));
   zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('over'); add(e.dataTransfer.files); });
 
-  return h('div', {}, h('div', { class: 'card' }, zone, input), h('div', { class: 'card' }, list, h('div', { class: 'row', style: { marginTop: '10px' } }, btn, status)));
+  drawMode();
+  return h('div', {}, modeBox, h('div', { class: 'card' }, zone, input), h('div', { class: 'card' }, list, h('div', { class: 'row', style: { marginTop: '10px' } }, btn, status)));
 }
