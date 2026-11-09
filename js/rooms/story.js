@@ -1,7 +1,8 @@
 // Story room: chapters → scenes → lines. Edit speakers, expressions, order, and preview the dialogue box.
-import { h, toast, loading, errorBox, confirmBox, modal } from '../ui.js';
+import { h, toast, loading, errorBox, confirmBox, modal, closeModal } from '../ui.js';
 import { requestPanel, newId } from './requests.js';
 import { makeDraggable, moveInArray } from '../drag.js';
+import { loadRegistry, updateRegistry } from '../assets.js';
 
 const FILE = 'data/story/prologue.json';
 const CHARS = 'data/characters.json';
@@ -19,9 +20,9 @@ const REPEAT = { none: '다시 말 걸면 반복 없음', tail: '끝부분 반�
 let S = null;
 
 async function load(ctx) {
-  const [st, ch] = await Promise.all([ctx.store.getJSON(FILE), ctx.store.getJSON(CHARS, { characters: [] })]);
+  const [st, ch, reg] = await Promise.all([ctx.store.getJSON(FILE), ctx.store.getJSON(CHARS, { characters: [] }), loadRegistry(ctx.store).catch(() => [])]);
   if (!st.data) throw new Error('스토리 데이터(data/story/prologue.json)가 없어요.');
-  S = { story: st.data, sha: st.sha, chars: ch.data, dirty: new Set(), flowDirty: false, checked: new Set(), openGroups: new Set(), store: ctx.store };
+  S = { story: st.data, sha: st.sha, chars: ch.data, assets: reg, dirty: new Set(), flowDirty: false, checked: new Set(), openGroups: new Set(), store: ctx.store };
 }
 
 const uid = p => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -334,9 +335,10 @@ function stepRow(ctx, s, steps, st, i, redraw, change) {
       emoSel.replaceChildren(...list.map(e => h('option', { value: e, selected: e === st.emotion }, emotionLabel(e) + (avail.length && !avail.includes(e) ? ' (그림 없음)' : ''))));
     };
     fillEmo();
-    spk.onchange = () => { st.speaker = spk.value; change(); fillEmo(); loadPic(); };
+    spk.onchange = () => { st.speaker = spk.value; change(); fillEmo(); loadPic(); nameIn.placeholder = `이름표: ${defName()}`; };
     emoSel.onchange = () => { st.emotion = emoSel.value; change(); loadPic(); };
-    const nameIn = h('input', { class: 'name-in', placeholder: '표시 이름', value: st.name || '' });
+    const defName = () => speakers().find(sp => sp.id === st.speaker)?.name || '';
+    const nameIn = h('input', { class: 'name-in', placeholder: `이름표: ${defName()}`, value: st.name || '', title: '대사창에 뜨는 이름을 이 대사만 바꿔요. 비워 두면 기본 이름. 예) ???, 낯선 목소리, 풍차 관리인' });
     nameIn.oninput = () => { st.name = nameIn.value || undefined; if (!st.name) delete st.name; change(); };
     const text = h('textarea', { rows: 2, placeholder: '대사를 입력하세요' });
     text.value = st.text || '';
@@ -366,7 +368,8 @@ function stepRow(ctx, s, steps, st, i, redraw, change) {
       }
       change();
     };
-    body = h('div', { class: 'cmd' }, h('span', { class: 'tag' }, '명령'), opSel, args);
+    body = h('div', { class: 'cmd' }, h('span', { class: 'tag' }, '명령'), opSel, st.op === 'show_cg' ? cgPicker(ctx, st, change, redraw) : args);
+    opSel.addEventListener('change', redraw);
   }
   row.append(grip, check, body, tools);
   return row;
@@ -452,6 +455,110 @@ async function askReview(ctx, s) {
     ctx.refreshBadges();
     toast('요청을 남겼어요. Claude에게 "요청함 처리해줘"라고 말해 주세요.');
   } catch (e) { toast(e.message, true); }
+}
+
+// ---------- illustration picker (show_cg) ----------
+const MAX_CG = 3;
+let hoverBox = null;
+function hoverPreview(url, e) {
+  if (!hoverBox) { hoverBox = h('div', { class: 'hover-preview' }); document.body.append(hoverBox); }
+  if (!url) { hoverBox.style.display = 'none'; return; }
+  hoverBox.replaceChildren(h('img', { src: url }));
+  const w = Math.min(520, window.innerWidth * 0.5);
+  const x = e.clientX + 20 + w > window.innerWidth ? e.clientX - w - 20 : e.clientX + 20;
+  Object.assign(hoverBox.style, { display: 'block', width: `${w}px`, left: `${x}px`, top: `${Math.max(10, Math.min(e.clientY - 120, window.innerHeight - w * 0.62 - 10))}px` });
+}
+
+// Candidates for an illustration slot: registry "event" images tagged with this key, plus ones linked by hand.
+function cgCandidates(key) {
+  const ill = S.story.illustrations?.[key] || {};
+  const files = [...(ill.candidates || [])];
+  for (const a of S.assets) if (a.kind === 'event' && a.illustrationKey === key && a.status !== '보관' && !files.includes(a.file)) files.push(a.file);
+  if (ill.file && !files.includes(ill.file)) files.unshift(ill.file);
+  return files.slice(0, MAX_CG);
+}
+
+async function saveIllustrations(ctx, message) {
+  await ctx.store.updateJSON(FILE, latest => { latest.illustrations = S.story.illustrations; return latest; }, message);
+}
+
+function cgPicker(ctx, st, change, redraw) {
+  st.args ||= {};
+  S.story.illustrations ||= {};
+  const ills = S.story.illustrations;
+  const keySel = h('select', {}, h('option', { value: '' }, '(일러스트 고르기)'),
+    Object.entries(ills).map(([k, v]) => h('option', { value: k, selected: k === st.args.key }, `${v.title || k}${v.file ? '' : ' · 준비 중'}`)),
+    h('option', { value: '__new' }, '+ 새 일러스트 칸 만들기'));
+  keySel.onchange = async () => {
+    if (keySel.value === '__new') {
+      const title = h('input', { placeholder: '예) 신전의 꺼진 대동력석' });
+      const key = h('input', { placeholder: '영어 id (예: temple_dead_stone)' });
+      const ok = await modal('새 일러스트 칸', h('div', {}, h('label', { class: 'field' }, h('span', {}, '이름'), title), h('label', { class: 'field' }, h('span', {}, 'id (Codex가 그림을 등록할 때 이 id를 씀)'), key)),
+        [{ label: '취소', value: false }, { label: '만들기', value: true, primary: true }]);
+      const k = (key.value.trim() || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+      if (!ok || !k) { keySel.value = st.args.key || ''; return; }
+      ills[k] = { title: title.value.trim() || k, file: null, status: '제작필요', candidates: [] };
+      st.args.key = k;
+      await saveIllustrations(ctx, `일러스트 칸 추가: ${k}`).catch(e => toast(e.message, true));
+    } else st.args.key = keySel.value;
+    change(); redraw();
+  };
+  const dur = h('input', { type: 'number', step: 0.1, min: 0, value: st.args.duration ?? 0.9, class: 'dur', title: '나타나는 데 걸리는 시간(초)' });
+  dur.oninput = () => { st.args.duration = Number(dur.value); change(); };
+
+  const key = st.args.key;
+  const strip = h('div', { class: 'cg-strip' });
+  if (key && ills[key]) {
+    const ill = ills[key];
+    const cands = cgCandidates(key);
+    const pick = async file => {
+      ill.file = file; ill.status = '선택됨';
+      try {
+        await saveIllustrations(ctx, `일러스트 선택: ${key}`);
+        await updateRegistry(ctx.store, all => { for (const a of all) if (a.file === file) a.status = '사용중'; }, `일러스트 사용 시작: ${key}`);
+        toast(`"${ill.title}" 일러스트를 골랐어요.`);
+      } catch (e) { toast(e.message, true); }
+      hoverPreview(null); redraw();
+    };
+    for (let i = 0; i < MAX_CG; i++) {
+      const file = cands[i];
+      if (!file) {
+        strip.append(h('button', { class: 'cg-slot empty', onclick: () => linkCandidate(ctx, key, redraw), title: 'Codex가 이 칸 id로 등록하면 자동으로 나타나요. 직접 연결도 할 수 있어요.' }, '+ 후보'));
+        continue;
+      }
+      const slot = h('button', { class: `cg-slot ${ill.file === file ? 'on' : ''}`, title: '마우스를 올리면 크게 보여요. 누르면 이 그림으로 선택' }, h('span', { class: 'muted' }, '…'));
+      S.store.blobUrl(file).then(u => {
+        slot.replaceChildren(...[h('img', { src: u }), ill.file === file && h('span', { class: 'cg-check' }, '✓')].filter(Boolean));
+        slot.onmouseenter = e => hoverPreview(u, e);
+        slot.onmousemove = e => hoverPreview(u, e);
+        slot.onmouseleave = () => hoverPreview(null);
+      }).catch(() => slot.replaceChildren(h('span', { class: 'muted' }, '없음')));
+      slot.onclick = () => pick(file);
+      strip.append(slot);
+    }
+    strip.append(h('span', { class: 'muted cg-note' }, ill.file ? '✓ 선택됨' : cands.length ? '하나를 골라 주세요' : `id "${key}"로 등록된 후보가 아직 없어요`));
+  }
+  return h('div', { class: 'cg-picker' }, h('div', { class: 'row' }, keySel, h('span', { class: 'muted', style: { fontSize: '12px' } }, '나타나는 시간'), dur, h('span', { class: 'muted', style: { fontSize: '12px' } }, '초')), strip);
+}
+
+async function linkCandidate(ctx, key, redraw) {
+  const events = S.assets.filter(a => a.kind === 'event' && a.status !== '보관');
+  if (!events.length) return toast('이벤트 일러스트로 등록된 그림이 없어요. 캐릭터룸 → 그림 올리기에서 종류를 "이벤트 일러스트"로 올려 주세요.', true);
+  const grid = h('div', { class: 'thumb-grid' });
+  const choice = await new Promise(resolve => {
+    for (const a of events) {
+      const card = h('div', { class: 'thumb-card', onclick: () => { resolve(a.file); closeModal(); } }, h('div', { class: 'thumb' }, '…'), h('div', { class: 'cap' }, a.id));
+      S.store.blobUrl(a.file).then(u => card.firstChild.replaceChildren(h('img', { src: u })));
+      grid.append(card);
+    }
+    modal('후보로 연결할 그림 고르기', grid, [{ label: '취소', value: null }]).then(() => resolve(null));
+  });
+  if (!choice) return;
+  const ill = S.story.illustrations[key];
+  ill.candidates ||= [];
+  if (!ill.candidates.includes(choice)) ill.candidates.push(choice);
+  try { await saveIllustrations(ctx, `일러스트 후보 연결: ${key}`); } catch (e) { toast(e.message, true); }
+  redraw();
 }
 
 // ---------- preview ----------
