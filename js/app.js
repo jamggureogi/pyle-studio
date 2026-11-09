@@ -76,7 +76,7 @@ function setupPage() {
         h('li', {}, h('a', { href: 'https://github.com/settings/personal-access-tokens/new', target: '_blank' }, 'GitHub 토큰 만들기 페이지'), '를 여세요.'),
         h('li', {}, 'Token name: ', h('b', {}, '신관전승 편집실'), ' / Expiration: 원하는 기간'),
         h('li', {}, 'Repository access: ', h('b', {}, 'Only select repositories'), ' → ', h('b', {}, 'pyle_claude'), ' 선택'),
-        h('li', {}, 'Permissions → Repository permissions → ', h('b', {}, 'Contents'), '를 ', h('b', {}, 'Read and write'), '로'),
+        h('li', {}, 'Permissions에서 ', h('b', {}, '+ Add permissions'), ' → ', h('b', {}, 'Contents'), ' 체크 → 권한을 ', h('b', {}, 'Read and write'), '로 변경 (Metadata는 자동으로 추가돼요)'),
         h('li', {}, '맨 아래 ', h('b', {}, 'Generate token'), ' → 나온 열쇠를 복사해서 위 칸에 붙여넣기'),
       ),
       h('p', { class: 'muted' }, '⚠️ 열쇠는 채팅이나 다른 곳에 붙여넣지 마세요.'),
