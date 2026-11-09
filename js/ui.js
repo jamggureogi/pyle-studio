@@ -34,9 +34,16 @@ export function modal(title, body, actions = [{ label: '닫기', value: null }])
         h('div', { class: 'row', style: { marginTop: '16px', justifyContent: 'flex-end' } },
           actions.map(a => h('button', { class: `btn ${a.primary ? 'primary' : ''} ${a.danger ? 'danger' : ''}`, onclick: () => close(typeof a.value === 'function' ? a.value() : a.value) }, a.label))),
       ));
+    bg._close = close;
     document.body.append(bg);
     bg.querySelector('input,textarea')?.focus();
   });
+}
+
+// Close the top-most open modal (used by actions inside a modal).
+export function closeModal(value = null) {
+  const all = document.querySelectorAll('.modal-bg');
+  all[all.length - 1]?._close?.(value);
 }
 
 export async function confirmBox(text, okLabel = '확인') {

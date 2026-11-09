@@ -5,12 +5,13 @@ import * as scenario from './rooms/scenario.js';
 import * as requests from './rooms/requests.js';
 import * as placeholder from './rooms/placeholder.js';
 import * as story from './rooms/story.js';
+import * as character from './rooms/character.js';
 
 export const ROOMS = [
   { id: 'home', name: '홈', ico: '🏠', mod: home },
   { id: 'scenario', name: '시나리오', ico: '📜', mod: scenario },
   { id: 'system', name: '시스템', ico: '⚔️', mod: placeholder },
-  { id: 'character', name: '캐릭터', ico: '🧑', mod: placeholder },
+  { id: 'character', name: '캐릭터', ico: '🧑', mod: character },
   { id: 'story', name: '스토리', ico: '🎬', mod: story },
   { id: 'map', name: '맵', ico: '🗺️', mod: placeholder },
   { id: 'requests', name: '요청함', ico: '📮', mod: requests },
