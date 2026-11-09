@@ -3,7 +3,7 @@ import { h, toast, fmtDate, fill, modal } from '../ui.js';
 import { loadRegistry, KINDS } from '../assets.js';
 
 const FILE = 'data/codex_tasks.json';
-const STATUS = { 대기: 'warn', 작업중: 'info', 질문: 'danger', 완료: 'ok', 확인됨: '', '다시 요청': 'danger' };
+const STATUS = { 대기: 'warn', 작업중: 'info', 질문: 'danger', 완료: 'ok', 확인됨: '', '다시 요청': 'danger', 보류: '' };
 const ASK = '편집실 업데이트 확인하고 data/codex_tasks.json에서 "대기"·"다시 요청" 작업을 AGENTS.md 규칙대로 처리해 줘.';
 
 async function copy(text, what = '복사했어요.') {
@@ -11,18 +11,19 @@ async function copy(text, what = '복사했어요.') {
 }
 
 export async function render(ctx, rest) {
-  const tab = ['done', 'checked', 'all'].includes(rest[0]) ? rest[0] : 'open';
+  const tab = ['done', 'checked', 'hold', 'all'].includes(rest[0]) ? rest[0] : 'open';
   const [{ data }, reg] = await Promise.all([ctx.store.getJSON(FILE, { tasks: [] }), loadRegistry(ctx.store).catch(() => [])]);
   const tasks = (data.tasks || []).slice().sort((a, b) => (a.priority || 9) - (b.priority || 9));
   const groups = {
     open: tasks.filter(t => ['대기', '작업중', '질문', '다시 요청'].includes(t.status)),
     done: tasks.filter(t => t.status === '완료'),
     checked: tasks.filter(t => t.status === '확인됨'),
+    hold: tasks.filter(t => t.status === '보류'),
     all: tasks,
   };
   const list = h('div', {});
   for (const t of groups[tab]) list.append(card(ctx, t, reg));
-  if (!groups[tab].length) list.append(h('div', { class: 'card empty' }, { open: 'Codex에게 맡길 작업이 없어요.', done: '확인할 결과가 없어요.', checked: '확인을 마친 작업이 없어요.', all: '작업이 없어요.' }[tab]));
+  if (!groups[tab].length) list.append(h('div', { class: 'card empty' }, { open: 'Codex에게 맡길 작업이 없어요.', done: '확인할 결과가 없어요.', checked: '확인을 마친 작업이 없어요.', hold: '보류 중인 작업이 없어요.', all: '작업이 없어요.' }[tab]));
   return h('div', { class: 'page' },
     h('h1', {}, '🤝 코덱스'),
     h('p', { class: 'sub' }, 'Claude가 Codex에게 남기는 그림 작업 지시서예요. Codex가 그림을 만들어 올리고 "완료"로 표시하면, 여기서 결과를 보고 확인하거나 다시 요청해요.'),
@@ -34,6 +35,7 @@ export async function render(ctx, rest) {
       h('a', { href: '#/codex', class: tab === 'open' ? 'on' : '' }, `할 일 (${groups.open.length})`),
       h('a', { href: '#/codex/done', class: tab === 'done' ? 'on' : '' }, `완료 · 확인 필요 (${groups.done.length})`),
       h('a', { href: '#/codex/checked', class: tab === 'checked' ? 'on' : '' }, `확인됨 (${groups.checked.length})`),
+      h('a', { href: '#/codex/hold', class: tab === 'hold' ? 'on' : '' }, `보류 (${groups.hold.length})`),
       h('a', { href: '#/codex/all', class: tab === 'all' ? 'on' : '' }, `전체 (${tasks.length})`)),
     list);
 }
@@ -82,6 +84,7 @@ function card(ctx, t, reg) {
     h('div', { class: 'muted', style: { fontSize: '12px', margin: '4px 0 8px' } },
       `우선순위 ${t.priority} · ${KINDS[t.kind] || t.kind} · ${t.count}장 · ${t.size}`, t.illustrationKey && ` · 일러스트 칸 ${t.illustrationKey}`, t.owner && ` · 인물 ${t.owner}`, ` · ${t.createdBy} ${t.createdAt || ''}`),
     h('div', { class: 'row out' }, h('span', { class: 'muted' }, '결과 넣을 곳'), h('code', {}, t.outputDir), h('button', { class: 'btn small', onclick: () => copy(t.outputDir) }, '복사')),
+    t.holdNote && t.status === '보류' && h('p', { class: 'notes hold' }, '⏸ ', t.holdNote),
     t.notes && h('p', { class: 'notes' }, '📌 ', t.notes),
     h('details', { open: ['대기', '다시 요청', '질문'].includes(t.status) },
       h('summary', {}, '요청문 (프롬프트)'),

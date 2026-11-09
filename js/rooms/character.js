@@ -57,7 +57,7 @@ async function peopleView(ctx, id) {
   const cur = list.find(c => c.id === id) || list[0];
   const side = h('div', { class: 'card tree people-list' }, list.map(c => {
     const file = c.portraits?.normal || Object.values(c.portraits || {})[0];
-    const n = assets.filter(a => a.owner === c.id && a.status === '후보').length;
+    const n = assets.filter(a => (a.owner === c.id || a.owners?.includes(c.id)) && a.status === '후보').length;
     return h('a', { href: `#/character/people/${c.id}`, class: c.id === cur.id ? 'on' : '' },
       file ? thumb(ctx.store, file, 'avatar') : h('div', { class: 'avatar' }, c.name.slice(0, 1)),
       h('span', { class: 'name' }, c.name, c.displayName && h('small', { class: 'muted' }, ` (${c.displayName})`)),
@@ -146,7 +146,7 @@ async function compareAll(ctx, chars) {
 
 function personPage(ctx, c, chars, assets) {
   const emotions = chars.emotions || {};
-  const mine = assets.filter(a => a.owner === c.id);
+  const mine = assets.filter(a => a.owner === c.id || a.owners?.includes(c.id));
   const portraitGrid = h('div', { class: 'thumb-grid' },
     Object.entries(c.portraits || {}).map(([emo, file]) => h('div', { class: 'thumb-card', onclick: () => viewImage(ctx.store, file, `${c.name} · ${emotions[emo] || emo}`) },
       thumb(ctx.store, file), h('div', { class: 'cap' }, emotions[emo] || emo))));
@@ -163,7 +163,7 @@ function personPage(ctx, c, chars, assets) {
     Object.keys(c.portraits || {}).length ? fitCard(ctx, c, chars) : null,
     h('div', { class: 'card' },
       h('h2', {}, '이 인물의 등록 그림'),
-      mine.length ? Object.entries(byKind).map(([k, arr]) => [h('h4', { class: 'muted' }, KINDS[k] || k), assetGrid(ctx, arr, chars)])
+      mine.length ? Object.entries(byKind).sort(([a], [b]) => (a === 'reference' ? -1 : b === 'reference' ? 1 : 0)).map(([k, arr]) => [h('h4', { class: 'muted' }, KINDS[k] || k), assetGrid(ctx, arr, chars)])
         : h('div', { class: 'empty' }, '등록된 그림이 없어요.')));
 }
 
@@ -178,7 +178,7 @@ async function libraryView(ctx, rest) {
     return s;
   };
   const counts = Object.fromEntries(STATUSES.map(s => [s, assets.filter(a => a.status === s).length]));
-  const shown = assets.filter(a => (f.status === '전체' || a.status === f.status) && (!f.kind || a.kind === f.kind) && (!f.owner || a.owner === f.owner));
+  const shown = assets.filter(a => (f.status === '전체' || a.status === f.status) && (!f.kind || a.kind === f.kind) && (!f.owner || a.owner === f.owner || a.owners?.includes(f.owner)));
   return h('div', {},
     h('div', { class: 'card row' },
       h('div', { class: 'tabs', style: { margin: 0, border: 0 } }, [...STATUSES, '전체'].map(s => h('a', { href: '#', class: s === f.status ? 'on' : '', onclick: e => { e.preventDefault(); go({ status: s }); } }, s === '전체' ? `전체 (${assets.length})` : `${s} (${counts[s]})`))),

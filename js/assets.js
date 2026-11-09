@@ -6,7 +6,7 @@ export const REGISTRY = 'data/asset_registry.json';
 export const CHARS = 'data/characters.json';
 export const KINDS = {
   portrait: '초상화', field: '필드 스프라이트', battle: '전투 스프라이트', cutin: '전투 애니메이션',
-  tile: '바닥 재질', decor: '바닥 장식', object: '맵 사물', effect: '이펙트', ui: 'UI', event: '이벤트 일러스트', reference: '참고 자료',
+  tile: '바닥 재질', decor: '바닥 장식', object: '맵 사물', effect: '이펙트', ui: 'UI', event: '이벤트 일러스트', reference: '디자인 시트·참고 자료',
 };
 export const STATUSES = ['후보', '승인', '사용중', '보관'];
 export const statusClass = { 후보: 'warn', 승인: 'info', 사용중: 'ok', 보관: '' };
