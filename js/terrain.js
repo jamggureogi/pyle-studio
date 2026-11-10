@@ -23,6 +23,9 @@ export function fbm(x, y, seed, octaves = 4) {
   return v / total;
 }
 
+// 지형이 닿는 정도(0~1)에 따라 경계 잡음을 부드럽게 줄인다. 딱 끊으면 칸 경계에서 잘린 조각이 남는다 (RV-502)
+function ramp(w) { const t = Math.min(1, Math.max(0, w / 0.3)); return t * t * (3 - 2 * t); }
+
 function hexToRgb(hex) {
   const n = parseInt(hex.replace('#', ''), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
@@ -67,6 +70,8 @@ export class TerrainRenderer {
     this.ctx = this.canvas.getContext('2d');
     this.img = this.ctx.createImageData(this.W, this.H);
     this.noise = new Map();
+    // 지형별 덮인 정도 (0~255): 그림자·베벨 효과에 씀
+    this.cover = map.terrains.map(() => new Uint8Array(this.W * this.H));
   }
 
   def(i) { return this.defs.find(d => d.id === this.map.terrains[i]) || { color: '#888888', edgeAmp: 0.5, edgeFreq: 8 }; }
@@ -139,10 +144,10 @@ export class TerrainRenderer {
             let s;
             if (n === 1) s = 1;
             else if (soft || rough) {
-              const amp = (this.def(k).edgeAmp ?? 0.5) * this.noiseFor(k)[y * W + x] * (1 - 0.6 * soft) * (1 + 0.8 * rough);
+              const amp = (this.def(k).edgeAmp ?? 0.5) * this.noiseFor(k)[y * W + x] * (1 - 0.6 * soft) * (1 + 0.8 * rough) * ramp(ws[j]);
               const torn = rough ? rough * (1.6 * (fbm(x / (40 * scale), y / (40 * scale), 700 + k * 13, 3) - 0.5) + 0.9 * (fbm(x / (14 * scale), y / (14 * scale), 900 + k * 7, 2) - 0.5)) : 0;
-              s = ws[j] + amp + torn + 0.01 * k;
-            } else s = ws[j] + (this.def(k).edgeAmp ?? 0.5) * this.noiseFor(k)[y * W + x] + 0.01 * k;
+              s = ws[j] + amp + torn * ramp(ws[j]) + 0.01 * k;
+            } else s = ws[j] + (this.def(k).edgeAmp ?? 0.5) * this.noiseFor(k)[y * W + x] * ramp(ws[j]) + 0.01 * k;
             sc[j] = s; if (s > best) best = s;
           }
           const sh = soft ? sharp * (1 - soft) + 3.5 * soft : sharp;
@@ -155,7 +160,11 @@ export class TerrainRenderer {
             }
           }
           height[(y - hy0) * hw + (x - hx0)] = Hh / tot;
-          if (writeColor) { const i = (y * W + x) * 4; data[i] = R / tot; data[i + 1] = G / tot; data[i + 2] = B / tot; data[i + 3] = 255; }
+          if (writeColor) {
+            const i = (y * W + x) * 4, pi = y * W + x; data[i] = R / tot; data[i + 1] = G / tot; data[i + 2] = B / tot; data[i + 3] = 255;
+            for (let t = 0; t < this.cover.length; t++) this.cover[t][pi] = 0;
+            for (let j = 0; j < n; j++) this.cover[ks[j]][pi] = Math.round(255 * Math.exp(sh * (sc[j] - best)) / tot);
+          }
         }
       }
     };
@@ -163,20 +172,7 @@ export class TerrainRenderer {
     pass(false, hx0, hy0, x1, y0);
     pass(false, hx0, y0, x0, y1);
     pass(true, x0, y0, x1, y1);
-    // soft drop shadow from higher terrain toward the lower right (light from the upper left)
-    const d = Math.max(1, Math.round(4 * scale));
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
-      const hy = y - hy0, hx = x - hx0, here = height[hy * hw + hx];
-      let drop = 0, cnt = 0;
-      for (let k = d - 1; k <= d + 1; k++) {
-        const sy = hy - k, sx = hx - k;
-        if (sy >= 0 && sx >= 0) { drop += Math.max(0, height[sy * hw + sx] - here); cnt++; }
-      }
-      if (cnt) {
-        const f = 1 - 0.35 * Math.min(1, drop / cnt), i = (y * W + x) * 4;
-        data[i] *= f; data[i + 1] *= f; data[i + 2] *= f;
-      }
-    }
+    // (예전의 고정 그림자는 없앰: 이제 바닥 재질 탭의 그림자·베벨 효과로 정함, 게임과 같게)
     this.ctx.putImageData(this.img, 0, 0, x0, y0, x1 - x0, y1 - y0);
   }
 }
@@ -238,22 +234,56 @@ export function drawHeights(g, map, scale, strips, cache = {}) {
         plat[y * W + x] = v + 0.55 * cache.noise[y * W + x] > 0.5 ? 1 : 0;
       }
     }
+    const base = new Float32Array(d.length); for (let i = 0; i < d.length; i++) base[i] = d[i];
+    const mul = (i, k) => { d[i] = Math.min(255, d[i] * k); d[i + 1] = Math.min(255, d[i + 1] * k); d[i + 2] = Math.min(255, d[i + 2] * k); };
+    const rockAt = (i, v, x, k) => {
+      if (F) { const fi = ((v % F.h) * F.w + (x % F.w)) * 4, a = F.d[fi + 3] / 255; d[i] = (F.d[fi] * a + 118 * (1 - a)) * k; d[i + 1] = (F.d[fi + 1] * a + 104 * (1 - a)) * k; d[i + 2] = (F.d[fi + 2] * a + 88 * (1 - a)) * k; }
+      else { d[i] = 118 * k; d[i + 1] = 104 * k; d[i + 2] = 88 * k; }
+    };
+    const P = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? 0 : plat[y * W + x];
+    // 1) 윗면: 밝게 + 가장자리 테 (왼쪽·위는 밝게, 오른쪽은 어둡게)
+    const rim = Math.max(2, Math.round(5 * scale));
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (!plat[y * W + x]) continue;
+      const i = (y * W + x) * 4;
+      d[i] = Math.min(255, d[i] * 1.07 + 4); d[i + 1] = Math.min(255, d[i + 1] * 1.07 + 4); d[i + 2] = Math.min(255, d[i + 2] * 1.07 + 4);
+      if (!P(x - rim, y) || !P(x, y - rim)) mul(i, 1.16); else if (!P(x + rim, y)) mul(i, 0.8);
+    }
+    const sideW = Math.max(3, Math.round(14 * scale)), slopeLen = Math.round(faceH * 1.5), taper = Math.max(4, Math.round(40 * scale));
+    // 2) 위쪽 경계 그늘, 3) 좌우 옆벽
+    for (let y = 1; y < H; y++) for (let x = 0; x < W; x++) {
+      if (plat[y * W + x] && !plat[(y - 1) * W + x]) for (let v = 0; v <= Math.round(6 * scale) && y - 1 - v >= 0; v++) mul(((y - 1 - v) * W + x) * 4, 0.7 + 0.22 * v / (6 * scale));
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W - 1; x++) {
+      const a = plat[y * W + x], b = plat[y * W + x + 1];
+      if (a && !b) for (let k = 1; k <= sideW && x + k < W && !plat[y * W + x + k]; k++) rockAt((y * W + x + k) * 4, y, x + k, 0.62 + 0.18 * k / sideW);
+      if (!a && b) for (let k = 0; k < sideW && x - k >= 0 && !plat[y * W + x - k]; k++) rockAt((y * W + x - k) * 4, y, x - k, 0.95 - 0.15 * k / sideW);
+    }
+    // 4) 아래쪽 경계: 절벽 벽(비탈 옆은 끝이 비스듬히) 또는 언덕 경사면
+    const isHill = (x, yb) => hillAt(Math.floor((yb - 20 * scale) / T), Math.floor(x / T)) || hillAt(Math.floor(yb / T), Math.floor(x / T));
     for (let x = 0; x < W; x++) {
       for (let yb = 0; yb < H - 1; yb++) {
         if (!(plat[yb * W + x] && !plat[(yb + 1) * W + x])) continue;
-        const hill = hillAt(Math.floor((yb - 20 * scale) / T), Math.floor(x / T)) || hillAt(Math.floor(yb / T), Math.floor(x / T));
-        for (let v = 0; v < faceH && yb + 1 + v < H; v++) {
-          const y = yb + 1 + v, i = (y * W + x) * 4;
-          if (plat[y * W + x]) break;
-          if (hill) { const k = 0.70 + 0.30 * Math.pow(v / faceH, 0.7); d[i] *= k; d[i + 1] *= k; d[i + 2] *= k; continue; }
-          const k = 0.82 + 0.18 * (1 - v / faceH);
-          if (F) { const fi = (v * F.w + (x % F.w)) * 4, a = F.d[fi + 3] / 255, rk = 118 * (1 - a), gk = 104 * (1 - a), bk = 88 * (1 - a); d[i] = (F.d[fi] * a + rk) * k; d[i + 1] = (F.d[fi + 1] * a + gk) * k; d[i + 2] = (F.d[fi + 2] * a + bk) * k; }
-          else { d[i] = 118 * k; d[i + 1] = 104 * k; d[i + 2] = 88 * k; }
+        if (isHill(x, yb)) {
+          for (let v = 0; v < slopeLen && yb + 1 + v < H; v++) {
+            const y = yb + 1 + v, i = (y * W + x) * 4, t = v / slopeLen, si = (Math.max(0, y - faceH) * W + x) * 4;
+            const w = Math.pow(Math.min(1, Math.max(0, (t - 0.35) / 0.65)), 1.5);
+            let k = 1.10 - 0.34 * Math.sin(Math.PI * Math.pow(t, 0.7));
+            if (t > 0.8) k += (1 - k) * (t - 0.8) / 0.2;
+            for (let c = 0; c < 3; c++) d[i + c] = Math.min(255, (d[si + c] * (1 - w) + base[i + c] * w) * k);
+          }
+          continue;
         }
-        if (hill) continue;
+        let fh = faceH;
+        for (let k = 1; k <= taper; k++) if (isHill(x - k, yb) || isHill(x + k, yb)) { fh = Math.max(3, Math.round(faceH * k / taper)); break; }
+        for (let v = 0; v < fh && yb + 1 + v < H; v++) {
+          const y = yb + 1 + v;
+          if (plat[y * W + x]) break;
+          rockAt((y * W + x) * 4, v, x, 0.82 + 0.18 * (1 - v / faceH));
+        }
         for (let v = 0; v < 20 * scale; v++) {           // 절벽 발치 그늘
-          const y = yb + 1 + faceH + v; if (y >= H || plat[y * W + x]) break;
-          const i = (y * W + x) * 4, k = 0.64 + 0.36 * v / (20 * scale); d[i] *= k; d[i + 1] *= k; d[i + 2] *= k;
+          const y = yb + 1 + fh + v; if (y >= H || plat[y * W + x]) break;
+          mul((y * W + x) * 4, 0.64 + 0.36 * v / (20 * scale));
         }
         if (Lp) {                                          // 위 가장자리에 늘어진 풀
           const top = yb - Math.floor(lipH / 3);
@@ -267,4 +297,82 @@ export function drawHeights(g, map, scale, strips, cache = {}) {
     }
   }
   g.putImageData(img, 0, 0);
+}
+
+// ---------- 지형 효과: 그림자(드롭섀도우)·베벨 (tools/tilegen/terrain.py apply_effects와 같은 계산) ----------
+export const SHADOW_DEFAULT = { on: true, angle: 135, distance: 10, size: 12, opacity: 0.45, color: '#1a1408' };
+export const BEVEL_DEFAULT = { on: true, angle: 135, size: 10, depth: 1, highlight: 0.25, shade: 0.35 };
+
+function boxBlur(a, W, H, r) {
+  r = Math.round(r);
+  if (r < 1) return a;
+  const tmp = new Float32Array(W * H), out = new Float32Array(W * H), n = 2 * r + 1;
+  for (let pass = 0; pass < 2; pass++) {
+    const src = pass === 0 ? a : out;
+    for (let y = 0; y < H; y++) {             // 가로
+      let acc = 0; const row = y * W;
+      for (let k = -r; k <= r; k++) acc += src[row + Math.min(W - 1, Math.max(0, k))];
+      for (let x = 0; x < W; x++) { tmp[row + x] = acc / n; acc += src[row + Math.min(W - 1, x + r + 1)] - src[row + Math.max(0, x - r)]; }
+    }
+    for (let x = 0; x < W; x++) {             // 세로
+      let acc = 0;
+      for (let k = -r; k <= r; k++) acc += tmp[Math.min(H - 1, Math.max(0, k)) * W + x];
+      for (let y = 0; y < H; y++) { out[y * W + x] = acc / n; acc += tmp[Math.min(H - 1, y + r + 1) * W + x] - tmp[Math.max(0, y - r) * W + x]; }
+    }
+  }
+  return out;
+}
+
+export function hasEffects(defs, ids) {
+  return ids.some(id => { const d = defs.find(x => x.id === id) || {}; return d.shadow?.on || d.bevel?.on; });
+}
+
+// data: RGBA 픽셀, cover: 지형 번호별 덮인 정도(Uint8), ids: 맵의 지형 id 목록(아래→위), scale: 그림 배율
+export function applyEffects(data, W, H, cover, ids, defs, scale = 1) {
+  const N = W * H;
+  const present = ids.map((id, k) => k).filter(k => cover[k].some(v => v > 0));
+  const above = new Float32Array(N);
+  const coverAbove = {};
+  for (let i = present.length - 1; i >= 0; i--) {
+    const k = present[i];
+    for (let p = 0; p < N; p++) above[p] += cover[k][p] / 255;
+    coverAbove[k] = Float32Array.from(above);
+  }
+  for (const k of present) {
+    const d = defs.find(x => x.id === ids[k]) || {};
+    const sh = d.shadow, bv = d.bevel;
+    if (!sh?.on && !bv?.on) continue;
+    const C = new Float32Array(N);
+    for (let p = 0; p < N; p++) C[p] = cover[k][p] / 255;
+    if (sh?.on) {
+      const a = (sh.angle ?? 135) * Math.PI / 180, dist = (sh.distance ?? 10) * scale;
+      const dx = Math.round(-dist * Math.cos(a)), dy = Math.round(dist * Math.sin(a));
+      const shifted = new Float32Array(N);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const sx = Math.min(W - 1, Math.max(0, x - dx)), sy = Math.min(H - 1, Math.max(0, y - dy));
+        shifted[y * W + x] = C[sy * W + sx];
+      }
+      const S = boxBlur(shifted, W, H, (sh.size ?? 12) * scale / 2);
+      const op = sh.opacity ?? 0.45, col = parseInt((sh.color || '#1a1408').slice(1), 16), cr = col >> 16 & 255, cg = col >> 8 & 255, cb = col & 255;
+      const ca = coverAbove[k];
+      for (let p = 0; p < N; p++) {
+        const al = Math.min(1, Math.max(0, op * S[p] * (1 - Math.min(1, ca[p]))));
+        if (al <= 0) continue;
+        const i = p * 4; data[i] = data[i] * (1 - al) + cr * al; data[i + 1] = data[i + 1] * (1 - al) + cg * al; data[i + 2] = data[i + 2] * (1 - al) + cb * al;
+      }
+    }
+    if (bv?.on) {
+      const r = Math.max(1, (bv.size ?? 10) * scale / 2);
+      const B = boxBlur(C, W, H, r);
+      const a = (bv.angle ?? 135) * Math.PI / 180, lx = Math.cos(a), ly = -Math.sin(a), depth = bv.depth ?? 1, hiK = bv.highlight ?? 0.25, loK = bv.shade ?? 0.35, nr = 2 * Math.round(r) + 1;
+      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+        const p = y * W + x, m = C[p];
+        if (m <= 0) continue;
+        const gx = (B[p + 1] - B[p - 1]) / 2, gy = (B[p + W] - B[p - W]) / 2;
+        const f = (-gx * lx - gy * ly) * nr * depth, i = p * 4;
+        if (f > 0) { const hi = Math.min(1, f) * m * hiK; data[i] += (255 - data[i]) * hi; data[i + 1] += (255 - data[i + 1]) * hi; data[i + 2] += (255 - data[i + 2]) * hi; }
+        else if (f < 0) { const lo = 1 - Math.min(1, -f) * m * loK; data[i] *= lo; data[i + 1] *= lo; data[i + 2] *= lo; }
+      }
+    }
+  }
 }

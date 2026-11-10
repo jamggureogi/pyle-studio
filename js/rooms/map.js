@@ -2,7 +2,7 @@
 // place objects, and assign approved ground textures to terrain types.
 import { h, toast, modal, confirmBox, fill } from '../ui.js';
 import { requestPanel } from './requests.js';
-import { TerrainRenderer, drawHeights, loadStrip, CLIFF_FACE, CLIFF_LIP } from '../terrain.js';
+import { TerrainRenderer, drawHeights, loadStrip, CLIFF_FACE, CLIFF_LIP, applyEffects, hasEffects, SHADOW_DEFAULT, BEVEL_DEFAULT } from '../terrain.js';
 import { newId } from './requests.js';
 import { loadRegistry, thumb, KINDS } from '../assets.js';
 
@@ -40,10 +40,20 @@ async function terrainsView(ctx) {
     const amp = h('input', { type: 'number', step: 0.05, min: 0, max: 1, value: t.edgeAmp, class: 'num' });
     const freq = h('input', { type: 'number', step: 1, min: 2, max: 30, value: t.edgeFreq, class: 'num' });
     const walk = h('input', { type: 'checkbox', checked: t.walkable !== false });
-    const collect = () => ({ ...t, file: sel.value || null, color: color.value, edgeAmp: Number(amp.value), edgeFreq: Number(freq.value), walkable: walk.checked });
+    const fx = { shadow: t.shadow ? { ...t.shadow } : null, bevel: t.bevel ? { ...t.bevel } : null };
+    const fxBtn = h('button', { class: 'btn small' });
+    const fxLabel = () => { fxBtn.textContent = [fx.shadow?.on && '그림자', fx.bevel?.on && '베벨'].filter(Boolean).join('·') || '효과 없음'; };
+    fxLabel();
+    fxBtn.onclick = () => effectsDialog(ctx, data.terrains, i, fx, () => fxLabel());
+    const collect = () => {
+      const o = { ...t, file: sel.value || null, color: color.value, edgeAmp: Number(amp.value), edgeFreq: Number(freq.value), walkable: walk.checked };
+      if (fx.shadow) o.shadow = fx.shadow; else delete o.shadow;
+      if (fx.bevel) o.bevel = fx.bevel; else delete o.bevel;
+      return o;
+    };
     return { el: h('tr', {}, h('td', {}, i + 1), h('td', {}, h('b', {}, t.name), h('div', { class: 'muted', style: { fontSize: '11px' } }, t.id)),
       h('td', {}, t.file ? thumb(ctx.store, t.file, 'thumb mini') : h('span', { class: 'swatch', style: { background: t.color } })),
-      h('td', {}, sel), h('td', {}, color), h('td', {}, amp), h('td', {}, freq), h('td', {}, walk)), collect };
+      h('td', {}, sel), h('td', {}, color), h('td', {}, amp), h('td', {}, freq), h('td', {}, walk), h('td', {}, fxBtn)), collect };
   });
   const save = async () => {
     try {
@@ -56,9 +66,57 @@ async function terrainsView(ctx) {
     h('div', { class: 'card' },
       h('p', { class: 'muted' }, '지형마다 승인된 바닥 재질 그림을 연결해요. 그림이 없으면 임시 색으로 보여요. 위쪽 지형일수록 아래 지형 위에 덮여요. "경계 흔들림"이 클수록 경계가 구불구불하고, "경계 촘촘함"이 클수록 잘게 들쭉날쭉해요.'),
       h('div', { style: { overflowX: 'auto' } }, h('table', { class: 'tbl' },
-        h('tr', {}, ['순서', '지형', '그림', '바닥 재질 그림', '임시 색', '경계 흔들림', '경계 촘촘함', '걸을 수 있음'].map(x => h('th', {}, x))),
+        h('tr', {}, ['순서', '지형', '그림', '바닥 재질 그림', '임시 색', '경계 흔들림', '경계 촘촘함', '걸을 수 있음', '그림자·베벨'].map(x => h('th', {}, x))),
         rows.map(r => r.el))),
       h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: save }, '저장'), h('span', { class: 'muted' }, `바닥 재질 후보·승인 그림 ${tiles.length}장`))));
+}
+
+// ---------- 지형 효과 (그림자·베벨) 설정 + 작은 미리보기 ----------
+// 미리보기: 이 지형이 아래 지형 위에 덩어리로 놓인 6×4칸을 게임과 같은 방법으로 그린다.
+async function effectsDialog(ctx, terrains, idx, fx, onDone) {
+  const t = terrains[idx];
+  const below = terrains.slice(0, idx).reverse().find(x => x.walkable !== false) || terrains.find(x => x.id !== t.id);
+  const work = { shadow: { ...SHADOW_DEFAULT, on: false, ...(fx.shadow || {}) }, bevel: { ...BEVEL_DEFAULT, on: false, ...(fx.bevel || {}) } };
+  const cv = h('canvas', { class: 'fx-preview' });
+  const cols = 6, rows = 4;
+  const corners = [];
+  for (let r = 0; r <= rows; r++) for (let c = 0; c <= cols; c++) corners.push(r >= 1 && r <= 3 && c >= 1 && c <= 4 && !(r === 1 && c === 4) ? 1 : 0);
+  const mini = { cols, rows, terrains: [below.id, t.id], corners };
+  const defsNow = () => terrains.map((d, k) => k === idx ? { ...d, shadow: work.shadow, bevel: work.bevel } : d);
+  const rend = new TerrainRenderer(mini, defsNow(), ctx.store, 1);
+  let ready = false;
+  const redraw = () => {
+    if (!ready) return;
+    cv.width = rend.W; cv.height = rend.H;
+    const g = cv.getContext('2d'); g.drawImage(rend.canvas, 0, 0);
+    const im = g.getImageData(0, 0, rend.W, rend.H);
+    applyEffects(im.data, rend.W, rend.H, rend.cover, mini.terrains, defsNow(), 1);
+    g.putImageData(im, 0, 0);
+  };
+  rend.init().then(() => { rend.render(); ready = true; redraw(); });
+  const num = (obj, key, min, max, step, label) => {
+    const r = h('input', { type: 'range', min, max, step, value: obj[key] });
+    const v = h('span', { class: 'muted', style: { minWidth: '38px', display: 'inline-block' } }, obj[key]);
+    r.oninput = () => { obj[key] = Number(r.value); v.textContent = r.value; redraw(); };
+    return h('label', { class: 'fx-row' }, h('span', {}, label), r, v);
+  };
+  const chk = (obj, label) => { const c = h('input', { type: 'checkbox', checked: obj.on }); c.onchange = () => { obj.on = c.checked; redraw(); }; return h('label', { class: 'row', style: { fontWeight: 600 } }, c, label); };
+  const color = h('input', { type: 'color', value: work.shadow.color }); color.oninput = () => { work.shadow.color = color.value; redraw(); };
+  const ok = await modal(`그림자·베벨: ${t.name}`, h('div', { class: 'fx-dialog' },
+    h('p', { class: 'muted', style: { fontSize: '12px', margin: '0 0 8px' } }, `미리보기: "${below.name}" 위에 놓인 "${t.name}" (게임 바닥과 같은 계산). 빛은 각도 쪽에서 와요 (135 = 왼쪽 위).`),
+    cv,
+    h('div', { class: 'fx-cols' },
+      h('div', {}, chk(work.shadow, '그림자 (드롭섀도우)'),
+        num(work.shadow, 'angle', 0, 360, 5, '각도'), num(work.shadow, 'distance', 0, 40, 1, '거리'), num(work.shadow, 'size', 0, 40, 1, '크기(번짐)'),
+        num(work.shadow, 'opacity', 0, 1, 0.05, '불투명도'), h('label', { class: 'fx-row' }, h('span', {}, '색'), color)),
+      h('div', {}, chk(work.bevel, '베벨 (경계를 볼록하게)'),
+        num(work.bevel, 'angle', 0, 360, 5, '빛 각도'), num(work.bevel, 'size', 1, 40, 1, '크기'), num(work.bevel, 'depth', 0.2, 3, 0.1, '깊이'),
+        num(work.bevel, 'highlight', 0, 1, 0.05, '밝은 쪽'), num(work.bevel, 'shade', 0, 1, 0.05, '어두운 쪽')))),
+    [{ label: '취소', value: false }, { label: '적용 (저장은 표 아래 [저장])', value: true, primary: true }]);
+  if (!ok) return;
+  fx.shadow = work.shadow.on ? work.shadow : null;
+  fx.bevel = work.bevel.on ? work.bevel : null;
+  onDone();
 }
 
 // ---------- editor ----------
@@ -136,6 +194,11 @@ async function editView(ctx, id) {
   function paintBase() {
     const g = base.getContext('2d');
     g.drawImage(M.renderer.canvas, 0, 0);
+    if (hasEffects(M.defs, M.map.terrains)) {       // 바닥 재질 탭의 그림자·베벨
+      const im = g.getImageData(0, 0, base.width, base.height);
+      applyEffects(im.data, base.width, base.height, M.renderer.cover, M.map.terrains, M.defs, st.quality);
+      g.putImageData(im, 0, 0);
+    }
     M.hcache ||= {};
     if (M.hcache.scale !== st.quality) M.hcache = { scale: st.quality };
     drawHeights(g, M.map, st.quality, M.strips, M.hcache);
