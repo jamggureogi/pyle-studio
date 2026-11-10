@@ -9,7 +9,7 @@ export const LAYOUT = {
   chinY: 0.73,        // chin y (the box top is at 0.62, so the head rises above the box)
   eyeToChin: 0.078,   // eye-to-chin distance (fraction of stage height)
   minTextX: 0.25,     // the text never starts left of this
-  maxTextX: 0.40,     // ...or right of this; anything of the portrait past it fades out softly
+  maxTextX: 0.40,     // ...or right of this
   textGap: 0.018,     // space between the portrait and the text
 };
 
@@ -143,21 +143,8 @@ export function portraitLayer(url, char, emotion) {
     if (box) box.style.paddingLeft = `${Math.round(textX - L.boxLeft * W)}px`;
     layoutStage(stage, textX);
 
-    // Soft edges only where the picture really ends: past the text limit, and at its own bottom
-    // when that bottom stops above the box bottom.
-    const masks = [];
-    const stop = textX - L.textGap * W * 0.5;
-    if (reach > stop) {
-      const end = (stop - r.left) / r.width * 100, start = end - (0.05 * W) / r.width * 100;
-      masks.push(`linear-gradient(to right, #000 ${start.toFixed(1)}%, transparent ${end.toFixed(1)}%)`);
-    }
-    const bottom = r.top + r.height;
-    // the picture ends inside the box: let it dissolve over its last ~14% instead of a hard line
-    if (bottom < boxBottom - 2) masks.push(`linear-gradient(to bottom, #000 86%, transparent 100%)`);
-    const m = masks.join(', ');
-    img.style.maskImage = img.style.webkitMaskImage = m || '';
-    img.style.maskComposite = masks.length > 1 ? 'intersect' : '';
-    img.style.webkitMaskComposite = masks.length > 1 ? 'source-in' : '';
+    // 초상화 가장자리 흐림은 쓰지 않는다 (게임과 같게). 위치는 UI 룸에서 직접 맞춘다.
+    img.style.maskImage = img.style.webkitMaskImage = '';
   };
   img.onload = fit;
   img.src = url;

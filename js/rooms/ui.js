@@ -24,7 +24,7 @@ export const DEFAULT_MENUS = {
     { id: 'continue', label: '이어하기', show: true }, { id: 'new', label: '처음부터 시작', show: true },
     { id: 'village', label: '마을 걸어 보기', show: true }, { id: 'battle', label: '전투만 해 보기', show: true }],
   battleUi: {
-    panelSide: 'right', animation: true,
+    panelSide: 'left', animation: true, zoom: 1.3,
     commands: [
       { id: 'move', label: '이동', show: true }, { id: 'attack', label: '공격', show: true }, { id: 'skill', label: '기술', show: true },
       { id: 'item', label: '아이템', show: true }, { id: 'guard', label: '방어', show: true }, { id: 'wait', label: '대기', show: true }],
@@ -280,6 +280,7 @@ function anchorFrom(x, y) {
 
 function fieldTab(ctx) {
   const hud = U.hud;
+  U.fieldZoom ??= Number(U.ui.fieldZoom || 1.3);
   const stage = h('div', { class: 'pv-stage ui-stage' });
   let sel = U.hudSel || 'action';
   const ctrl = h('div', { class: 'ui-ctrl' });
@@ -321,13 +322,15 @@ function fieldTab(ctx) {
     const isText = sel === 'location' || sel === 'goal';
     fill(ctrl,
       h('div', { class: 'card' },
+        h('label', { class: 'field' }, h('span', {}, `필드 확대 ${Number(U.fieldZoom).toFixed(2)}배 (클수록 인물·건물이 크게, 보이는 범위는 좁게)`),
+          (() => { const z = h('input', { type: 'range', min: 1, max: 1.8, step: 0.05, value: U.fieldZoom }); z.onchange = () => { U.fieldZoom = Number(z.value); drawCtrl(); }; return z; })()),
         h('h4', { style: { marginTop: 0 } }, '고른 것: ', HUD_NAMES[sel]),
         h('p', { class: 'muted small' }, '화면에서 버튼·글자를 눌러 고르고, 끌어서 옮겨요. 화면 모서리를 기준으로 저장돼서 휴대폰 화면 비율이 달라도 같은 자리에 붙어요.'),
         slider(isText ? '글자 크기' : '크기', it.size, isText ? 12 : 40, isText ? 40 : 260, 1, v => { it.size = v; draw(); }, v => `${v}px`),
         h('div', { class: 'muted small' }, `기준 모서리: ${{ tl: '왼쪽 위', tr: '오른쪽 위', bl: '왼쪽 아래', br: '오른쪽 아래' }[it.anchor]} · ${it.x}, ${it.y}`)),
       h('div', { class: 'card' },
         h('div', { class: 'row' },
-          h('button', { class: 'btn small primary', onclick: () => saveUi(ctx, 'fieldHud', structuredClone(hud), '필드 화면 배치 저장').catch(e => toast(e.message, true)) }, '필드 화면 저장'),
+          h('button', { class: 'btn small primary', onclick: () => saveUi(ctx, 'fieldHud', structuredClone(hud), '필드 화면 배치 저장').then(() => saveUi(ctx, 'fieldZoom', U.fieldZoom, '필드 확대 저장')).catch(e => toast(e.message, true)) }, '필드 화면 저장'),
           h('button', { class: 'btn small', onclick: () => { for (const k2 of Object.keys(DEFAULT_HUD)) hud[k2] = structuredClone(DEFAULT_HUD[k2]); draw(); drawCtrl(); } }, '처음 값으로'))));
   }
   drawCtrl();
@@ -338,18 +341,25 @@ function fieldTab(ctx) {
 
 // ---------- 메뉴 ----------
 
-function listEditor(list, onChange, notes = {}) {
+function listEditor(list, onChange, notes = {}, opts = {}) {
   const box = h('div', { class: 'ui-list' });
   const draw = () => {
-    box.replaceChildren(...list.map((it, i) => {
+    const rows = list.map((it, i) => {
       const show = h('input', { type: 'checkbox', checked: it.show !== false, title: '보이기' });
       show.onchange = () => { it.show = show.checked; onChange(); };
       const label = h('input', { value: it.label });
       label.oninput = () => { it.label = label.value; onChange(); };
       const up = h('button', { class: 'btn small', disabled: i === 0, onclick: () => { [list[i - 1], list[i]] = [list[i], list[i - 1]]; draw(); onChange(); } }, '↑');
       const down = h('button', { class: 'btn small', disabled: i === list.length - 1, onclick: () => { [list[i + 1], list[i]] = [list[i], list[i + 1]]; draw(); onChange(); } }, '↓');
-      return h('div', { class: 'ui-list-row' }, up, down, show, label, h('span', { class: 'muted small' }, notes[it.id] ? `${it.id} · ${notes[it.id]}` : it.id));
-    }));
+      const del = it.custom && h('button', { class: 'btn small', title: '내가 추가한 항목 지우기', onclick: () => { list.splice(i, 1); draw(); onChange(); } }, '✕');
+      const note = it.custom ? '새 항목 · 저장하면 Claude가 화면을 만들어요' : notes[it.id] ? `${it.id} · ${notes[it.id]}` : it.id;
+      return h('div', { class: 'ui-list-row' }, up, down, show, label, h('span', { class: 'muted small' }, note), del);
+    });
+    const add = opts.allowAdd && h('button', { class: 'btn small', onclick: () => {
+      list.push({ id: `custom_${Date.now().toString(36)}`, label: '새 메뉴', show: true, custom: true });
+      draw(); onChange();
+    } }, '+ 항목 추가');
+    box.replaceChildren(...rows, ...(add ? [add] : []));
   };
   draw();
   return box;
@@ -369,7 +379,7 @@ function menuTab(ctx) {
     h('div', { class: 'ui-wrap' },
       h('div', { class: 'card ui-main' },
         h('h3', { style: { marginTop: 0 } }, '시스템 메뉴 (펜던트를 누르면 열리는 메뉴)'),
-        listEditor(m.systemMenu, redraw, NOT_YET),
+        listEditor(m.systemMenu, redraw, NOT_YET, { allowAdd: true }),
         h('div', { class: 'row', style: { marginTop: '10px' } },
           h('button', { class: 'btn small primary', onclick: () => saveUi(ctx, 'systemMenu', structuredClone(m.systemMenu), '시스템 메뉴 저장').catch(e => toast(e.message, true)) }, '시스템 메뉴 저장'))),
       prevSys),
@@ -377,34 +387,40 @@ function menuTab(ctx) {
       h('div', { class: 'card ui-main' },
         h('h3', { style: { marginTop: 0 } }, '타이틀 메뉴'),
         h('p', { class: 'muted small' }, '"이어하기"는 저장한 게 있을 때만 보여요.'),
-        listEditor(m.titleMenu, redraw),
+        listEditor(m.titleMenu, redraw, {}, { allowAdd: true }),
         h('div', { class: 'row', style: { marginTop: '10px' } },
           h('button', { class: 'btn small primary', onclick: () => saveUi(ctx, 'titleMenu', structuredClone(m.titleMenu), '타이틀 메뉴 저장').catch(e => toast(e.message, true)) }, '타이틀 메뉴 저장'))),
       prevTitle),
-    h('p', { class: 'muted small' }, '아직 게임에 없는 기능(동료, 설정)은 보이게 해 두면 "준비 중"으로 나와요. 필요한 메뉴가 더 있으면 요청함에 적어 주세요.'));
+    h('p', { class: 'muted small' }, '아직 게임에 없는 기능(동료, 설정)은 보이게 해 두면 "준비 중"으로 나와요. [+ 항목 추가]로 새 메뉴를 넣고 저장하면, Claude가 그 메뉴에 맞는 화면을 만들고 확인 룸에 보고해요.'));
 }
 
 // ---------- 전투 화면 ----------
 
 function battleTab(ctx) {
   const b = U.menus.battleUi;
-  const prev = h('div');
+  const prev = h('div', { class: 'ui-battle-col' });
   const redraw = () => {
-    const panel = h('div', { class: 'ui-battle-panel' }, h('div', { class: 'ui-menu-title' }, '캐릭터'),
+    // 게임과 같은 배치: 맵이 화면 가득, 명령 창(이름·HP·명령 6개)은 위 모서리에 작게, 정보 창은 아래 가운데
+    const panel = h('div', { class: `ui-battle-panel ${b.panelSide === 'right' ? 'right' : 'left'}` },
+      h('div', { class: 'ui-battle-head' }, h('b', {}, '캐릭터'), h('span', {}, 'HP 64 / 64')),
       h('div', { class: 'ui-battle-grid' }, b.commands.filter(x => x.show !== false).map(x => h('div', { class: 'ui-menu-btn' }, x.label))));
-    const board = h('div', { class: 'ui-battle-board' }, '전투 맵');
-    fill(prev, h('div', { class: `ui-battle-prev ${b.panelSide}` }, board, panel));
+    const info = h('div', { class: 'ui-battle-info' }, '빈 칸을 누르면 지형, 인물을 누르면 프로필');
+    const zoomNote = h('div', { class: 'ui-battle-zoom' }, `확대 ${Number(b.zoom || 1.3).toFixed(2)}배 · 화면을 밀어서 맵 둘러보기`);
+    fill(prev, h('div', { class: 'ui-battle-prev' }, h('div', { class: 'ui-battle-board' }), panel, info, zoomNote));
   };
   redraw();
-  const side = h('select', {}, h('option', { value: 'right', selected: b.panelSide === 'right' }, '오른쪽'), h('option', { value: 'left', selected: b.panelSide === 'left' }, '왼쪽'));
+  const side = h('select', {}, h('option', { value: 'left', selected: b.panelSide !== 'right' }, '왼쪽 위 (기본)'), h('option', { value: 'right', selected: b.panelSide === 'right' }, '오른쪽 위'));
   side.onchange = () => { b.panelSide = side.value; redraw(); };
+  const zoom = h('input', { type: 'range', min: 1, max: 2, step: 0.05, value: b.zoom || 1.3 });
+  zoom.oninput = () => { b.zoom = Number(zoom.value); redraw(); };
   const anim = h('input', { type: 'checkbox', checked: b.animation !== false });
   anim.onchange = () => { b.animation = anim.checked; };
   return h('div', { class: 'ui-wrap' },
     h('div', { class: 'card ui-main' },
       h('h3', { style: { marginTop: 0 } }, '전투 명령'),
       listEditor(b.commands, redraw),
-      h('label', { class: 'field', style: { marginTop: '10px' } }, h('span', {}, '명령 칸 위치'), side),
+      h('label', { class: 'field', style: { marginTop: '10px' } }, h('span', {}, '명령 창 위치'), side),
+      h('label', { class: 'field' }, h('span', {}, '전투 맵 확대 (화면보다 작게는 안 줄어요)'), zoom),
       h('label', { class: 'row', style: { marginTop: '6px' } }, anim, '공격·기술을 쓰면 전투 애니메이션 화면 보여 주기 (처음 값)'),
       h('div', { class: 'row', style: { marginTop: '10px' } },
         h('button', { class: 'btn small primary', onclick: () => saveUi(ctx, 'battleUi', structuredClone(b), '전투 화면 저장').catch(e => toast(e.message, true)) }, '전투 화면 저장'))),
