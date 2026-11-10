@@ -3,7 +3,7 @@ import { h, toast, fmtDate, fill, modal } from '../ui.js';
 import { loadRegistry, KINDS } from '../assets.js';
 
 const FILE = 'data/codex_tasks.json';
-const STATUS = { 대기: 'warn', 작업중: 'info', 질문: 'danger', 완료: 'ok', 확인됨: '', '다시 요청': 'danger', 보류: '' };
+const STATUS = { 대기: 'warn', 작업중: 'info', 질문: 'danger', 완료: 'ok', 확인됨: '', '다시 요청': 'danger', 보류: '', 대체됨: '' };
 const ASK = '편집실 업데이트 확인하고 data/codex_tasks.json에서 "대기"·"다시 요청" 작업을 AGENTS.md 규칙대로 처리해 줘.';
 
 async function copy(text, what = '복사했어요.') {
@@ -17,7 +17,7 @@ export async function render(ctx, rest) {
   const groups = {
     open: tasks.filter(t => ['대기', '작업중', '질문', '다시 요청'].includes(t.status)),
     done: tasks.filter(t => t.status === '완료'),
-    checked: tasks.filter(t => t.status === '확인됨'),
+    checked: tasks.filter(t => t.status === '확인됨' || t.status === '대체됨'),
     hold: tasks.filter(t => t.status === '보류'),
     all: tasks,
   };
@@ -34,7 +34,7 @@ export async function render(ctx, rest) {
     h('div', { class: 'tabs' },
       h('a', { href: '#/codex', class: tab === 'open' ? 'on' : '' }, `할 일 (${groups.open.length})`),
       h('a', { href: '#/codex/done', class: tab === 'done' ? 'on' : '' }, `완료 · 확인 필요 (${groups.done.length})`),
-      h('a', { href: '#/codex/checked', class: tab === 'checked' ? 'on' : '' }, `확인됨 (${groups.checked.length})`),
+      h('a', { href: '#/codex/checked', class: tab === 'checked' ? 'on' : '' }, `확인됨 · 대체됨 (${groups.checked.length})`),
       h('a', { href: '#/codex/hold', class: tab === 'hold' ? 'on' : '' }, `보류 (${groups.hold.length})`),
       h('a', { href: '#/codex/all', class: tab === 'all' ? 'on' : '' }, `전체 (${tasks.length})`)),
     list);

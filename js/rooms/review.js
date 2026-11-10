@@ -14,13 +14,13 @@ function zoom(url) {
 }
 
 export async function render(ctx, rest) {
-  const tab = ['sent', 'done'].includes(rest[0]) ? rest[0] : 'open';
+  const tab = ['sent', 'done', 'old'].includes(rest[0]) ? rest[0] : 'open';
   const { data } = await ctx.store.getJSON(FILE, { items: [] });
   const all = data.items || [];
-  const groups = { open: all.filter(x => x.status === '확인 대기'), sent: all.filter(x => x.status === '피드백'), done: all.filter(x => x.status === '반영됨') };
+  const groups = { open: all.filter(x => x.status === '확인 대기'), sent: all.filter(x => x.status === '피드백'), done: all.filter(x => x.status === '반영됨'), old: all.filter(x => x.status === '지난 내용') };
   const list = h('div', { class: 'review-list' });
   const shown = groups[tab];
-  if (!shown.length) list.append(h('div', { class: 'card empty' }, { open: '지금 확인할 그림이 없어요.', sent: '보낸 피드백이 없어요.', done: '반영된 항목이 없어요.' }[tab]));
+  if (!shown.length) list.append(h('div', { class: 'card empty' }, { open: '지금 확인할 그림이 없어요.', sent: '보낸 피드백이 없어요.', done: '반영된 항목이 없어요.', old: '지난 내용이 없어요.' }[tab]));
   for (const it of shown) list.append(card(ctx, it, tab));
   return h('div', { class: 'page' },
     h('h1', {}, '🖼 확인'),
@@ -28,7 +28,9 @@ export async function render(ctx, rest) {
     h('div', { class: 'tabs' },
       h('a', { href: '#/review', class: tab === 'open' ? 'on' : '' }, `확인할 것 (${groups.open.length})`),
       h('a', { href: '#/review/sent', class: tab === 'sent' ? 'on' : '' }, `피드백 보냄 · 반영 대기 (${groups.sent.length})`),
-      h('a', { href: '#/review/done', class: tab === 'done' ? 'on' : '' }, `반영됨 (${groups.done.length})`)),
+      h('a', { href: '#/review/done', class: tab === 'done' ? 'on' : '' }, `반영됨 (${groups.done.length})`),
+      h('a', { href: '#/review/old', class: tab === 'old' ? 'on' : '' }, `지난 내용 (${groups.old.length})`)),
+    tab === 'old' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '새 버전이 나와서 답하지 않아도 되는 항목이에요. 궁금한 점은 새 항목으로 옮겨 두었어요.'),
     list);
 }
 
@@ -37,6 +39,7 @@ function card(ctx, it, tab) {
   const fb = it.feedback || {};
   let verdict = fb.verdict || null;
   let editing = it.status === '확인 대기';
+  const closed = it.status === '반영됨' || it.status === '지난 내용';
   const imgBox = h('div', { class: 'review-img' }, h('span', { class: 'muted' }, '불러오는 중…'));
   ctx.store.blobUrl(it.file).then(u => imgBox.replaceChildren(h('img', { src: u, onclick: () => zoom(u) }))).catch(() => imgBox.replaceChildren(h('span', { class: 'muted' }, '그림을 불러오지 못했어요')));
   const draw = () => {
@@ -57,15 +60,16 @@ function card(ctx, it, tab) {
     };
     fill(el,
       h('div', { class: 'row' }, h('span', { class: 'did' }, it.id), h('h2', { style: { margin: 0, flex: 1 } }, it.title),
-        h('span', { class: `badge ${it.status === '반영됨' ? 'ok' : it.status === '피드백' ? 'info' : 'warn'}` }, it.status)),
+        h('span', { class: `badge ${it.status === '반영됨' ? 'ok' : it.status === '피드백' ? 'info' : it.status === '지난 내용' ? '' : 'warn'}` }, it.status),
+        it.replacedBy && h('span', { class: 'muted', style: { fontSize: '12px' } }, `→ ${it.replacedBy}`)),
       h('div', { class: 'muted', style: { fontSize: '12px', margin: '2px 0 8px' } }, it.createdAt),
       imgBox,
       it.desc && h('p', { style: { fontSize: '14px', margin: '10px 0' } }, it.desc),
-      it.status !== '반영됨' && h('div', { class: 'row' }, vbtn('좋아요', '👍 좋아요'), vbtn('고쳐 주세요', '✏️ 고쳐 주세요')),
-      it.status !== '반영됨' && h('label', { class: 'field', style: { marginTop: '8px' } }, comment),
-      it.status === '반영됨' && fb.verdict && h('p', { class: 'muted', style: { fontSize: '13px' } }, `내 피드백: ${fb.verdict}${fb.comment ? ' — ' + fb.comment : ''}`),
+      !closed && h('div', { class: 'row' }, vbtn('좋아요', '👍 좋아요'), vbtn('고쳐 주세요', '✏️ 고쳐 주세요')),
+      !closed && h('label', { class: 'field', style: { marginTop: '8px' } }, comment),
+      closed && fb.verdict && h('p', { class: 'muted', style: { fontSize: '13px' } }, `내 피드백: ${fb.verdict}${fb.comment ? ' — ' + fb.comment : ''}`),
       it.response && h('div', { class: 'resp' }, h('b', {}, '💬 Claude: '), it.response),
-      it.status !== '반영됨' && h('div', { class: 'row' },
+      !closed && h('div', { class: 'row' },
         editing ? h('button', { class: 'btn primary', onclick: submit }, '제출') : h('button', { class: 'btn', onclick: () => { editing = true; draw(); } }, '고치기'),
         fb.at && !editing && h('span', { class: 'muted', style: { fontSize: '12px' } }, `${fmtDate(fb.at)} 제출`)));
     imgBox.isConnected || null;
