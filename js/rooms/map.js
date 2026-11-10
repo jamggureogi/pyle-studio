@@ -121,15 +121,16 @@ async function effectsDialog(ctx, terrains, idx, fx, onDone) {
 
 // ---------- editor ----------
 async function loadMap(ctx, id) {
-  const [idx, terr, story, assets, sprites] = await Promise.all([
+  const [idx, terr, story, assets, sprites, propsF] = await Promise.all([
     ctx.store.getJSON(INDEX, { maps: [] }), ctx.store.getJSON(TERRAINS, { terrains: [] }),
     ctx.store.getJSON(STORY, { scenes: {} }).catch(() => ({ data: { scenes: {} } })), loadRegistry(ctx.store),
-    ctx.store.getJSON('data/sprites.json', {}).catch(() => ({ data: {} }))]);
+    ctx.store.getJSON('data/sprites.json', {}).catch(() => ({ data: {} })),
+    ctx.store.getJSON('data/props.json', { props: {} }).catch(() => ({ data: { props: {} } }))]);
   const list = idx.data.maps;
   const mid = id && list.find(m => m.id === id) ? id : list[0]?.id;
   if (!mid) return { list, empty: true };
   const f = await ctx.store.getJSON(`data/maps/${mid}.json`);
-  return { list, id: mid, map: f.data, sha: f.sha, defs: terr.data.terrains, scenes: story.data.scenes || {}, assets, sprites: sprites.data || {}, dirty: false, store: ctx.store };
+  return { list, id: mid, map: f.data, sha: f.sha, defs: terr.data.terrains, scenes: story.data.scenes || {}, assets, sprites: sprites.data || {}, props: (propsF.data || {}).props || {}, dirty: false, store: ctx.store };
 }
 
 async function editView(ctx, id) {
@@ -193,10 +194,33 @@ async function editView(ctx, id) {
     overlay();
   }
   // ---------- 통행 지도 (게임 field.gd와 같은 규칙) ----------
-  // 막힌 칸 = 걸을 수 없는 지형(모서리 4개 중 2개 이상) + 건물 발자리 + 절벽 벽(높은 칸 바로 아래, 비탈 아님) + 다리는 열림 + 통행 붓.
+  // 막힌 칸 = 걸을 수 없는 지형(모서리 4개 중 2개 이상) + 건물 발자리 + 절벽 벽(높은 칸 바로 아래, 비탈 아님) + 통행 붓.
+  // 다리·계단은 걷는 자리만 열리고 난간은 칸보다 섬세하게 막힘 (자료 저장소의 사물 정보 파일).
   // 사물(나무·바위)은 밑동 둘레만 막혀서 주황 원으로 보여요.
+  // 사물 정보 (data/props.json, 키 = 그림 파일 이름): 걷는 자리 walk, 막힘 자리 block, 깔림 ground … 맵에 직접 적은 값이 우선
+  const propOf = o => ({ ...(M.props[(o.file || '').split('/').pop().replace(/\.[a-z]+$/, '')] || {}), ...o });
+  function objBox(o) {
+    const im = objImgs.get(o.file); if (!im) return null;
+    const p = propOf(o), w = im.naturalWidth * o.scale, hh = im.naturalHeight * o.scale, x = o.x - w / 2, y = o.y - hh;
+    const rect = r => { let a = r[0], b = r[2]; if (o.flip) { a = 1 - r[2]; b = 1 - r[0]; } return { x: x + w * a, y: y + hh * r[1], w: w * (b - a), h: hh * (r[3] - r[1]) }; };
+    const bl = Array.isArray(p.block) && p.block.length ? (Array.isArray(p.block[0]) ? p.block : [p.block]).map(rect) : null;
+    return { x, y, w, h: hh, ground: !!p.ground, bridge: !!p.bridge, walk: Array.isArray(p.walk) ? rect(p.walk) : null, block: bl, collide: p.collide };
+  }
+  // 네모 outer에서 keep(걷는 자리)을 뺀 나머지 조각들
+  function minus(o, k) {
+    const x0 = Math.max(o.x, k.x), y0 = Math.max(o.y, k.y), x1 = Math.min(o.x + o.w, k.x + k.w), y1 = Math.min(o.y + o.h, k.y + k.h);
+    if (x1 <= x0 || y1 <= y0) return [o];
+    const out = [];
+    if (y0 > o.y) out.push({ x: o.x, y: o.y, w: o.w, h: y0 - o.y });
+    if (y1 < o.y + o.h) out.push({ x: o.x, y: y1, w: o.w, h: o.y + o.h - y1 });
+    if (x0 > o.x) out.push({ x: o.x, y: y0, w: x0 - o.x, h: y1 - y0 });
+    if (x1 < o.x + o.w) out.push({ x: x1, y: y0, w: o.x + o.w - x1, h: y1 - y0 });
+    return out;
+  }
+  let opened = [];
   function passGrid() {
     const { cols, rows } = M.map, P = new Uint8Array(cols * rows);
+    opened = [];
     const walk = id => (M.defs.find(d => d.id === id) || {}).walkable !== false;
     for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
       let bad = 0;
@@ -206,12 +230,18 @@ async function editView(ctx, id) {
     for (const b of M.map.buildings || []) for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) if (x >= 0 && y >= 0 && x < cols && y < rows) P[y * cols + x] = 1;
     const H = M.map.heights, L = M.map.hills || [];
     if (H) for (let y = 0; y < rows - 1; y++) for (let x = 0; x < cols; x++) if ((H[y * cols + x] || 0) > (H[(y + 1) * cols + x] || 0) && !(L[y * cols + x] > 0)) P[(y + 1) * cols + x] = 1;
+    // 다리·계단: 걷는 자리(walk)가 닿는 칸은 물·절벽이어도 열린다 (난간은 drawPass가 빨갛게)
     for (const o of M.map.objects) {
-      if (!o.bridge) continue;
-      const im = objImgs.get(o.file); if (!im) continue;
-      const w = im.naturalWidth * o.scale, hh = im.naturalHeight * o.scale;
-      for (let ty = Math.floor((o.y - hh * 0.72) / TILE); ty <= Math.floor((o.y - hh * 0.2) / TILE); ty++)
-        for (let tx = Math.floor((o.x - w / 2) / TILE); tx <= Math.floor((o.x + w / 2) / TILE); tx++) if (tx >= 0 && ty >= 0 && tx < cols && ty < rows) P[ty * cols + tx] = 0;
+      const bx = objBox(o); if (!bx) continue;
+      if (bx.walk) {
+        const k = bx.walk;
+        for (let ty = Math.floor(k.y / TILE); ty <= Math.floor((k.y + k.h - 0.01) / TILE); ty++)
+          for (let tx = Math.floor(k.x / TILE); tx <= Math.floor((k.x + k.w - 0.01) / TILE); tx++)
+            if (tx >= 0 && ty >= 0 && tx < cols && ty < rows && P[ty * cols + tx] === 1) { P[ty * cols + tx] = 0; opened.push([tx, ty, k]); }
+      } else if (bx.bridge) {
+        for (let ty = Math.floor((o.y - bx.h * 0.72) / TILE); ty <= Math.floor((o.y - bx.h * 0.2) / TILE); ty++)
+          for (let tx = Math.floor(bx.x / TILE); tx <= Math.floor((bx.x + bx.w) / TILE); tx++) if (tx >= 0 && ty >= 0 && tx < cols && ty < rows) P[ty * cols + tx] = 0;
+      }
     }
     const po = M.map.passOverride;
     if (po) for (let i = 0; i < P.length; i++) { if (po[i] === 1) P[i] = 2; else if (po[i] === 2) P[i] = 3; }
@@ -221,12 +251,21 @@ async function editView(ctx, id) {
     const P = passGrid(), { cols, rows } = M.map;
     const col = ['', 'rgba(255,40,30,0.38)', 'rgba(60,130,255,0.38)', 'rgba(200,0,120,0.45)'];
     for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) { const v = P[y * cols + x]; if (v) { g.fillStyle = col[v]; g.fillRect(x * TILE, y * TILE, TILE, TILE); } }
-    g.fillStyle = 'rgba(255,150,20,0.5)';
+    // 칸보다 섬세한 막힘: 다리·계단의 난간(빨강)과 걷는 자리(초록), 넓은 사물의 발자리(빨강), 그 밖의 사물은 밑동 원(주황)
+    const red = 'rgba(255,40,30,0.38)';
+    g.fillStyle = red;
+    for (const [tx, ty, k] of opened) for (const r of minus({ x: tx * TILE, y: ty * TILE, w: TILE, h: TILE }, k)) g.fillRect(r.x, r.y, r.w, r.h);
     for (const o of M.map.objects) {
-      if (o.collide === false || o.ground) continue;
-      const im = objImgs.get(o.file); if (!im) continue;
-      const r = Math.min(46, Math.max(10, im.naturalWidth * o.scale * 0.16));
-      g.beginPath(); g.arc(o.x, o.y - 8, r, 0, Math.PI * 2); g.fill();
+      const bx = objBox(o); if (!bx) continue;
+      if (bx.walk) {
+        g.fillStyle = red; for (const r of minus(bx, bx.walk)) g.fillRect(r.x, r.y, r.w, r.h);
+        g.fillStyle = 'rgba(50,220,100,0.32)'; g.fillRect(bx.walk.x, bx.walk.y, bx.walk.w, bx.walk.h);
+      } else if (bx.block) {
+        g.fillStyle = red; for (const r of bx.block) g.fillRect(r.x, r.y, r.w, r.h);
+      } else if (bx.collide !== false && !bx.ground) {
+        g.fillStyle = 'rgba(255,150,20,0.5)';
+        g.beginPath(); g.arc(o.x, o.y - 8, Math.min(46, Math.max(10, bx.w * 0.16)), 0, Math.PI * 2); g.fill();
+      }
     }
   }
   const paintPass = p => {
@@ -267,7 +306,7 @@ async function editView(ctx, id) {
       return objImgs.get(file);
     };
     // buildings (game data): picture if there is one, otherwise the footprint box
-    const items = [...M.map.objects.map(o => ({ o, y: o.y })), ...(M.map.buildings || []).map(b => ({ b, y: (b.y + b.h) * TILE }))];
+    const items = [...M.map.objects.map(o => ({ o, y: propOf(o).ground ? -1e9 : o.y })), ...(M.map.buildings || []).map(b => ({ b, y: (b.y + b.h) * TILE }))];
     for (const it of items.sort((a, b) => a.y - b.y)) {
       if (it.b) {
         const b = it.b, bottom = (b.y + b.h) * TILE;
@@ -460,7 +499,7 @@ async function editView(ctx, id) {
             h('button', { class: `pal ${st.passMode === v ? 'on' : ''}`, onclick: () => { st.passMode = v; drawSide(); } }, l))),
           h('h4', {}, '붓 크기'),
           h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
-          h('p', { class: 'muted', style: { fontSize: '12px' } }, '게임에서 지나갈 수 있는지를 칸마다 보여 줘요. 빨강 = 자동으로 막힌 칸(물·건물·절벽 벽), 주황 원 = 나무·바위 밑동, 분홍 = 붓으로 막은 칸, 파랑 = 붓으로 연 칸. 자동 판정이 어색한 곳만 붓으로 막거나 여세요. 위쪽 [🚧 통행]을 켜면 다른 도구를 쓸 때도 보여요.')),
+          h('p', { class: 'muted', style: { fontSize: '12px' } }, '게임에서 지나갈 수 있는지를 칸마다 보여 줘요. 빨강 = 자동으로 막힌 곳(물·건물·절벽 벽·난간·넓은 사물), 초록 = 다리·계단의 걷는 자리, 주황 원 = 나무·바위 밑동, 분홍 = 붓으로 막은 칸, 파랑 = 붓으로 연 칸. 자동 판정이 어색한 곳만 붓으로 막거나 여세요. 위쪽 [🚧 통행]을 켜면 다른 도구를 쓸 때도 보여요.')),
         st.tool === 'event' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '맵을 누르면 그 칸에 이벤트 지점이 생겨요. 이미 있는 지점을 누르면 선택돼요. 오른쪽에서 종류와 연결할 스토리 장면을 고르세요.'),
         st.tool === 'object' && h('div', {},
           h('p', { class: 'muted', style: { fontSize: '13px' } }, '사물을 고르고 맵을 누르면 그 자리에 놓여요(누른 곳이 사물의 발밑). 놓인 사물은 끌어서 옮겨요.'),
