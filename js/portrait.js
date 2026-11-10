@@ -104,15 +104,19 @@ export function portraitArea(W, H, side) {
 
 // Returns css pixel box {left, top, width, height} for an image of natural size w×h on a stage W×H.
 // (The game does the same sum in story_player.gd → _place_portrait.)
-export function placePortrait(w, h, frame, W, H, side) {
+// mid: the middle of the drawn (non-transparent) part of the picture, 0..1 of its width (see contentMid).
+export function placePortrait(w, h, frame, W, H, side, mid = 0.5) {
   const L = LAYOUT, d = DIALOGUE;
   const right = sideNow(side) === 'right', dir = right ? -1 : 1;
-  const cx = right && d.split.flipRight ? 1 - frame.cx : frame.cx;
+  const flip = right && d.split.flipRight;
+  const cx = flip ? 1 - frame.cx : frame.cx;
   if (d.split.on && d.portraitFit === 'fill') {
-    // fill: the picture is as tall as the portrait box, stands on the box bottom, face centred in the area
+    // fill: the picture is as tall as the portrait box, stands on the box bottom, and the PICTURE
+    // (its drawn part, not the face) is centred in the area — so every portrait lines up the same way.
     const a = portraitArea(W, H, side);
     const height = Math.max(8, a.bottom - a.top) * (frame.scale || 1), width = w * height / h;
-    return { left: (a.x0 + a.x1) / 2 + dir * (frame.dx || 0) * W - cx * width, top: a.bottom + (frame.dy || 0) * H - height, width, height };
+    const m = flip ? 1 - mid : mid;
+    return { left: (a.x0 + a.x1) / 2 + dir * (frame.dx || 0) * W - m * width, top: a.bottom + (frame.dy || 0) * H - height, width, height };
   }
   const s = (L.eyeToChin * H * (frame.scale || 1)) / Math.max(0.02, (frame.chin - frame.eye) * h);
   const width = w * s, height = h * s;
@@ -135,14 +139,23 @@ function rightProfile(img) {
     g.drawImage(img, 0, 0, cols, rows);
     const px = g.getImageData(0, 0, cols, rows).data;
     prof = new Float32Array(rows);
+    let lo = cols, hi = 0;   // leftmost / rightmost drawn column of the whole picture
     for (let y = 0; y < rows; y++) {
       let r = 0;
-      for (let x = cols - 1; x >= 0; x--) if (px[(y * cols + x) * 4 + 3] > 40) { r = (x + 1) / cols; break; }
+      for (let x = cols - 1; x >= 0; x--) if (px[(y * cols + x) * 4 + 3] > 40) { r = (x + 1) / cols; hi = Math.max(hi, x + 1); break; }
+      for (let x = 0; x < cols; x++) if (px[(y * cols + x) * 4 + 3] > 40) { lo = Math.min(lo, x); break; }
       prof[y] = r;
     }
+    prof.mid = hi > lo ? (lo + hi) / 2 / cols : 0.5;
   } catch { prof = null; } // cross-origin image: fall back to the image box
   profiles.set(img.src, prof);
   return prof;
+}
+
+// The middle of the drawn part of the picture, 0..1 of its width (0.5 when it cannot be read).
+// (The game does the same in story_player.gd → _content_mid.)
+export function contentMid(img) {
+  return rightProfile(img)?.mid ?? 0.5;
 }
 
 // How far right the portrait reaches between stage rows y0..y1 (css px).
@@ -171,7 +184,7 @@ export function portraitLayer(url, char, emotion, side) {
     const stage = clip.parentElement;
     if (!stage || !img.naturalWidth) return;
     const d = DIALOGUE, W = stage.clientWidth, H = stage.clientHeight, k = W / 1280;
-    const r = placePortrait(img.naturalWidth, img.naturalHeight, frameFor(char, emotion), W, H, side);
+    const r = placePortrait(img.naturalWidth, img.naturalHeight, frameFor(char, emotion), W, H, side, d.split.on && d.portraitFit === 'fill' ? contentMid(img) : 0.5);
     const boxTop = (1 - L.boxBottom - L.boxHeight) * H, boxBottom = (1 - L.boxBottom) * H;
     const right = sideNow(side) === 'right';
     let cl = 0, cw = W, pad;

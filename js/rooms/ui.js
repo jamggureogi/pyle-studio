@@ -335,7 +335,7 @@ function dialogueTab(ctx) {
         sp && h('div', { class: 'row ui-pick' }, h('span', { class: 'fit-label' }, '맞추는 방법'),
           pick('직접 맞추기', !fillOn, () => { d.portraitFit = 'manual'; }),
           pick('박스에 채우기', fillOn, () => { d.portraitFit = 'fill'; })),
-        fillOn && h('p', { class: 'muted small' }, '초상화가 박스 높이에 꽉 차게 들어가요. 박스 아래쪽은 대화창 바닥에 붙어 있고, 화면의 가로 선(↕)을 위아래로 끌어서 박스 높이를 바꿔요.'),
+        fillOn && h('p', { class: 'muted small' }, '초상화가 박스 높이에 꽉 차게 들어가고, 모든 그림이 박스 가로 한가운데에 놓여요. 박스 아래쪽은 대화창 바닥에 붙어 있고, 화면의 가로 선(↕)을 위아래로 끌어서 박스 높이를 바꿔요.'),
         S.top,
         h('div', { class: 'row', style: { marginTop: '8px' } },
           h('button', { class: 'btn small', onclick: fillAll }, '모든 초상화를 박스에 채우기 (한꺼번에)'),
