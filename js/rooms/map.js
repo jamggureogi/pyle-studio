@@ -201,7 +201,7 @@ async function editView(ctx, id) {
     }
     M.hcache ||= {};
     if (M.hcache.scale !== st.quality) M.hcache = { scale: st.quality };
-    drawHeights(g, M.map, st.quality, M.strips, M.hcache);
+    drawHeights(g, M.map, st.quality, M.strips, M.hcache, M.renderer);
   }
   let baseQueued = false;
   const queueBase = () => { if (baseQueued) return; baseQueued = true; requestAnimationFrame(() => { baseQueued = false; paintBase(); }); };

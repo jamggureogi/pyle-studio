@@ -207,7 +207,7 @@ export async function loadStrip(store, file) {
 export function hasHeights(map) { return Array.isArray(map.heights) && map.heights.some(v => v > 0); }
 
 // g: 바닥 그림이 그려진 캔버스(배율 scale)의 2d 문맥. strips: {face, lip}
-export function drawHeights(g, map, scale, strips, cache = {}) {
+export function drawHeights(g, map, scale, strips, cache = {}, renderer = null) {
   if (!hasHeights(map)) return;
   const { cols, rows } = map, T = TILE * scale;
   const W = Math.round(cols * TILE * scale), H = Math.round(rows * TILE * scale);
@@ -241,12 +241,24 @@ export function drawHeights(g, map, scale, strips, cache = {}) {
       else { d[i] = 118 * k; d[i + 1] = 104 * k; d[i + 2] = 88 * k; }
     };
     const P = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? 0 : plat[y * W + x];
-    // 1) 윗면: 밝게 + 가장자리 테 (왼쪽·위는 밝게, 오른쪽은 어둡게)
+    // 1) 윗면: 같은 재질이지만 무늬를 어긋나게 다시 칠하고(아래 땅과 무늬가 이어지지 않게) 살짝 밝게 + 가장자리 테
+    const pdy = Math.round((37 * lvl + 11) * scale), pdx = Math.round((23 * lvl + 5) * scale);
+    const phase = (x, y, outArr) => {          // 지형별 덮인 정도 × 옮긴 무늬 (게임 apply_heights와 같은 계산)
+      outArr[0] = outArr[1] = outArr[2] = 0;
+      if (!renderer) { const i = (y * W + x) * 4; outArr[0] = base[i]; outArr[1] = base[i + 1]; outArr[2] = base[i + 2]; return; }
+      for (let k = 0; k < renderer.cover.length; k++) {
+        const w = renderer.cover[k][y * W + x] / 255; if (!w) continue;
+        const t = renderer.tex[k], ti = (((y + pdy) % t.h) * t.w + ((x + pdx) % t.w)) * 4;
+        outArr[0] += w * t.data[ti]; outArr[1] += w * t.data[ti + 1]; outArr[2] += w * t.data[ti + 2];
+      }
+    };
+    const pc = [0, 0, 0];
     const rim = Math.max(2, Math.round(5 * scale));
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       if (!plat[y * W + x]) continue;
       const i = (y * W + x) * 4;
-      d[i] = Math.min(255, d[i] * 1.07 + 4); d[i + 1] = Math.min(255, d[i + 1] * 1.07 + 4); d[i + 2] = Math.min(255, d[i + 2] * 1.07 + 4);
+      phase(x, y, pc);
+      d[i] = Math.min(255, pc[0] * 1.06 + 3); d[i + 1] = Math.min(255, pc[1] * 1.06 + 3); d[i + 2] = Math.min(255, pc[2] * 1.06 + 3);
       if (!P(x - rim, y) || !P(x, y - rim)) mul(i, 1.16); else if (!P(x + rim, y)) mul(i, 0.8);
     }
     const sideW = Math.max(3, Math.round(14 * scale)), slopeLen = Math.round(faceH * 1.5), taper = Math.max(4, Math.round(40 * scale));
@@ -265,12 +277,10 @@ export function drawHeights(g, map, scale, strips, cache = {}) {
       for (let yb = 0; yb < H - 1; yb++) {
         if (!(plat[yb * W + x] && !plat[(yb + 1) * W + x])) continue;
         if (isHill(x, yb)) {
-          for (let v = 0; v < slopeLen && yb + 1 + v < H; v++) {
-            const y = yb + 1 + v, i = (y * W + x) * 4, t = v / slopeLen, si = (Math.max(0, y - faceH) * W + x) * 4;
-            const w = Math.pow(Math.min(1, Math.max(0, (t - 0.35) / 0.65)), 1.5);
-            let k = 1.10 - 0.34 * Math.sin(Math.PI * Math.pow(t, 0.7));
-            if (t > 0.8) k += (1 - k) * (t - 0.8) / 0.2;
-            for (let c = 0; c < 3; c++) d[i + c] = Math.min(255, (d[si + c] * (1 - w) + base[i + c] * w) * k);
+          for (let v = 0; v < faceH && yb + 1 + v < H; v++) {   // 비탈: 윗면 무늬 → 아랫면 무늬로 매끄럽게
+            const y = yb + 1 + v, i = (y * W + x) * 4, t = v / faceH, w = t * t * (3 - 2 * t), k = 1.03 - 0.14 * Math.sin(Math.PI * t);
+            phase(x, y, pc);
+            for (let c = 0; c < 3; c++) d[i + c] = Math.min(255, (pc[c] * (1 - w) + base[i + c] * w) * k);
           }
           continue;
         }
