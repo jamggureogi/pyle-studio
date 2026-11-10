@@ -386,3 +386,4 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .claude-notice .links{display:flex;flex-direction:column;gap:2px;margin-top:4px;max-height:220px;overflow:auto}
 .claude-notice .links a{padding:2px 6px !important}
 .claude-note{border-left:4px solid #e3b341;background:#fffaf0}
+.map-feedback{margin-top:12px}.map-feedback textarea{width:100%;min-height:70px;box-sizing:border-box;margin-bottom:8px}

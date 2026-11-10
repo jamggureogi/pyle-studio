@@ -2,15 +2,17 @@
 // place objects, and assign approved ground textures to terrain types.
 import { h, toast, modal, confirmBox, fill } from '../ui.js';
 import { requestPanel } from './requests.js';
-import { TerrainRenderer } from '../terrain.js';
+import { TerrainRenderer, drawHeights, loadStrip, CLIFF_FACE, CLIFF_LIP } from '../terrain.js';
+import { newId } from './requests.js';
 import { loadRegistry, thumb, KINDS } from '../assets.js';
 
 const TILE = 64;
 const INDEX = 'data/maps/index.json';
 const TERRAINS = 'data/terrains.json';
 const STORY = 'data/story/prologue.json';
-const EVENT_KINDS = { trigger: '이벤트 지점', npc: 'NPC', exit: '출입구', chest: '보물상자', battle: '전투 지점', start: '시작 위치' };
-const EVENT_ICON = { trigger: '★', npc: '☺', exit: '⇥', chest: '▣', battle: '⚔', start: '▶' };
+const EVENT_KINDS = { trigger: '이벤트 지점', npc: 'NPC', exit: '출입구', zone: '구역 (밟으면 장면)', enter: '맵에 들어오면 (첫 장면)', mark: '이름표 (카메라 이동용)', chest: '보물상자', battle: '전투 지점', start: '시작 위치' };
+const EVENT_ICON = { trigger: '★', npc: '☺', exit: '⇥', zone: '▦', enter: '◉', mark: '⚑', chest: '▣', battle: '⚔', start: '▶' };
+const FEEDBACK = 'data/requests.json';
 
 let M = null; // { map, sha, id, dirty, defs, renderer, ... }
 
@@ -78,7 +80,8 @@ async function editView(ctx, id) {
     M = await loadMap(ctx, id);
   }
   if (M.empty) return h('div', { class: 'card empty' }, '맵이 없어요. ', h('button', { class: 'btn small', onclick: () => newMap(ctx) }, '+ 새 맵'));
-  const st = M.ui ||= { tool: 'terrain', terrain: M.map.terrains.indexOf('dirt_path') >= 0 ? M.map.terrains.indexOf('dirt_path') : 0, brush: 1, grid: true, zoom: 0.5, quality: 0.5, sel: null };
+  const st = M.ui ||= { tool: 'terrain', terrain: M.map.terrains.indexOf('dirt_path') >= 0 ? M.map.terrains.indexOf('dirt_path') : 0, brush: 1, grid: true, zoom: 0.5, quality: 0.5, sel: null, hlevel: 1, hstyle: 'cliff', blendMode: 1 };
+  st.hlevel ??= 1; st.hstyle ??= 'cliff'; st.blendMode ??= 1;
 
   const stage = h('div', { class: 'map-stage' }, h('div', { class: 'empty' }, '지형 그리는 중… (처음엔 몇 초 걸려요)'));
   const side = h('div', { class: 'map-side' });
@@ -121,13 +124,25 @@ async function editView(ctx, id) {
       await new Promise(r => setTimeout(r, 30));
       M.renderer.render();
     }
+    if (!M.strips) M.strips = { face: await loadStrip(ctx.store, CLIFF_FACE), lip: await loadStrip(ctx.store, CLIFF_LIP) };
     base.width = M.renderer.W; base.height = M.renderer.H;
-    base.getContext('2d').drawImage(M.renderer.canvas, 0, 0);
+    paintBase();
     over.width = W; over.height = H;
     layout();
     stage.replaceChildren(wrap);
     overlay();
   }
+  // 바닥 그림 + 높낮이(절벽·언덕)
+  function paintBase() {
+    const g = base.getContext('2d');
+    g.drawImage(M.renderer.canvas, 0, 0);
+    M.hcache ||= {};
+    if (M.hcache.scale !== st.quality) M.hcache = { scale: st.quality };
+    drawHeights(g, M.map, st.quality, M.strips, M.hcache);
+  }
+  let baseQueued = false;
+  const queueBase = () => { if (baseQueued) return; baseQueued = true; requestAnimationFrame(() => { baseQueued = false; paintBase(); }); };
+
   function overlay() {
     const g = over.getContext('2d');
     g.clearRect(0, 0, W, H);
@@ -168,6 +183,35 @@ async function editView(ctx, id) {
       for (let x = 0; x <= W; x += TILE) { g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, H); g.stroke(); }
       for (let y = 0; y <= H; y += TILE) { g.beginPath(); g.moveTo(0, y + 0.5); g.lineTo(W, y + 0.5); g.stroke(); }
     }
+    if (st.tool === 'height' && M.map.heights) {
+      const cols = ['rgba(0,0,0,0)', 'rgba(255,214,90,0.28)', 'rgba(255,140,60,0.32)', 'rgba(230,70,70,0.36)', 'rgba(160,60,200,0.4)'];
+      g.font = 'bold 18px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      for (let r = 0; r < M.map.rows; r++) for (let c = 0; c < M.map.cols; c++) {
+        const v = M.map.heights[r * M.map.cols + c] || 0, hill = (M.map.hills || [])[r * M.map.cols + c] > 0;
+        if (!v && !hill) continue;
+        g.fillStyle = cols[Math.min(4, v)]; g.fillRect(c * TILE, r * TILE, TILE, TILE);
+        g.fillStyle = 'rgba(0,0,0,0.65)'; g.fillText(`${v}${hill ? '↗' : ''}`, c * TILE + TILE / 2, r * TILE + TILE / 2);
+      }
+    }
+    if (st.tool === 'blend' && M.map.blend) {
+      for (let r = 0; r <= M.map.rows; r++) for (let c = 0; c <= M.map.cols; c++) {
+        const v = M.map.blend[r * (M.map.cols + 1) + c];
+        if (!v) continue;
+        g.fillStyle = v === 1 ? 'rgba(120,200,255,0.85)' : 'rgba(255,150,60,0.9)';
+        g.beginPath(); g.arc(c * TILE, r * TILE, 7, 0, Math.PI * 2); g.fill();
+      }
+    }
+    for (const ev of M.map.events) {
+      if (ev.kind === 'zone') {
+        g.save(); g.fillStyle = 'rgba(255,140,0,0.16)'; g.strokeStyle = 'rgba(255,140,0,0.9)'; g.lineWidth = 3; g.setLineDash([10, 6]);
+        g.fillRect(ev.x * TILE, ev.y * TILE, (ev.w || 1) * TILE, (ev.h || 1) * TILE); g.strokeRect(ev.x * TILE, ev.y * TILE, (ev.w || 1) * TILE, (ev.h || 1) * TILE); g.restore();
+      }
+    }
+    for (const ar of M.map.battleAreas || []) {
+      if (!st.grid) break;
+      g.save(); g.strokeStyle = 'rgba(255,80,200,0.9)'; g.lineWidth = 4; g.strokeRect(ar.x * TILE, ar.y * TILE, ar.w * TILE, ar.h * TILE);
+      g.fillStyle = 'rgba(255,220,250,0.95)'; g.font = 'bold 16px sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top'; g.fillText(`전투 칸: ${ar.label || ar.id}`, ar.x * TILE + 6, ar.y * TILE + 6); g.restore();
+    }
     for (const ev of M.map.events) {
       const cx = ev.x * TILE + TILE / 2, cy = ev.y * TILE + TILE / 2;
       g.fillStyle = st.sel === ev ? 'rgba(255,211,77,0.9)' : 'rgba(30,36,32,0.75)';
@@ -192,7 +236,39 @@ async function editView(ctx, id) {
     if (!changed) return;
     markDirty();
     M.renderer.render(cc - n - 1, cr - n - 1, cc + n, cr + n);
-    base.getContext('2d').drawImage(M.renderer.canvas, 0, 0);
+    queueBase();
+  };
+  // 높이 붓: 칸마다 높이(0~3)와 언덕(비탈) 표시
+  const paintHeight = p => {
+    const { cols, rows } = M.map, cr = Math.floor(p.y / TILE), cc = Math.floor(p.x / TILE), n = st.brush - 1;
+    M.map.heights ||= new Array(cols * rows).fill(0);
+    M.map.hills ||= new Array(cols * rows).fill(0);
+    let changed = false;
+    for (let r = cr - n; r <= cr + n; r++) for (let c = cc - n; c <= cc + n; c++) {
+      if (r < 0 || c < 0 || r >= rows || c >= cols) continue;
+      const i = r * cols + c, hill = st.hstyle === 'hill' ? 1 : 0;
+      if (st.hstyle === 'hillonly') { if (M.map.hills[i] !== 1) { M.map.hills[i] = 1; changed = true; } continue; }
+      if (M.map.heights[i] !== st.hlevel || M.map.hills[i] !== hill) { M.map.heights[i] = st.hlevel; M.map.hills[i] = hill; changed = true; }
+    }
+    if (!changed) return;
+    if (!M.map.heights.some(v => v > 0) && !M.map.hills.some(v => v > 0)) { delete M.map.heights; delete M.map.hills; }
+    markDirty(); queueBase(); overlay();
+  };
+  // 섞기 붓: 모서리마다 0 기본 / 1 부드럽게 / 2 거칠게
+  const paintBlend = p => {
+    const { cols, rows } = M.map, cr = Math.round(p.y / TILE), cc = Math.round(p.x / TILE), n = st.brush - 1;
+    M.map.blend ||= new Array((cols + 1) * (rows + 1)).fill(0);
+    let changed = false;
+    for (let r = cr - n; r <= cr + n; r++) for (let c = cc - n; c <= cc + n; c++) {
+      if (r < 0 || c < 0 || r > rows || c > cols) continue;
+      const i = r * (cols + 1) + c;
+      if (M.map.blend[i] !== st.blendMode) { M.map.blend[i] = st.blendMode; changed = true; }
+    }
+    if (!changed) return;
+    if (!M.map.blend.some(v => v)) delete M.map.blend;
+    markDirty();
+    M.renderer.render(cc - n - 2, cr - n - 2, cc + n + 1, cr + n + 1);
+    queueBase(); overlay();
   };
   const hitEvent = p => M.map.events.find(ev => ev.x === Math.floor(p.x / TILE) && ev.y === Math.floor(p.y / TILE));
   const hitObj = p => [...M.map.objects].reverse().find(o => Math.abs(o.x - p.x) < 40 && p.y < o.y + 10 && p.y > o.y - 120);
@@ -200,6 +276,8 @@ async function editView(ctx, id) {
     const p = posOf(e);
     over.setPointerCapture(e.pointerId);
     if (st.tool === 'terrain') { painting = true; paintAt(p); return; }
+    if (st.tool === 'height') { painting = true; paintHeight(p); return; }
+    if (st.tool === 'blend') { painting = true; paintBlend(p); return; }
     if (st.tool === 'event') {
       const hit = hitEvent(p);
       if (hit) st.sel = hit;
@@ -221,13 +299,13 @@ async function editView(ctx, id) {
   over.addEventListener('pointermove', e => {
     const p = posOf(e);
     status.textContent = `칸 (${Math.floor(p.x / TILE)}, ${Math.floor(p.y / TILE)})${M.dirty ? ' · 저장 안 한 변경 있음' : ''}`;
-    if (painting) paintAt(p);
+    if (painting) (st.tool === 'height' ? paintHeight : st.tool === 'blend' ? paintBlend : paintAt)(p);
     if (dragObj) { dragObj.o.x = Math.round(p.x + dragObj.dx); dragObj.o.y = Math.round(p.y + dragObj.dy); markDirty(); overlay(); }
   });
   over.addEventListener('pointerup', () => { painting = false; dragObj = null; });
 
   function drawSide() {
-    const tools = [['terrain', '🖌 지형 붓'], ['event', '★ 이벤트'], ['object', '🌲 사물'], ['select', '👆 선택']];
+    const tools = [['terrain', '🖌 지형 붓'], ['blend', '🌫 섞기 붓'], ['height', '⛰ 높이 붓'], ['event', '★ 이벤트'], ['object', '🌲 사물'], ['select', '👆 선택']];
     const objAssets = M.assets.filter(a => ['object', 'decor'].includes(a.kind) && a.status !== '보관');
     fill(side, 
       h('div', { class: 'card' },
@@ -242,6 +320,22 @@ async function editView(ctx, id) {
           h('h4', {}, '붓 크기'),
           h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
           h('p', { class: 'muted', style: { fontSize: '12px' } }, '칸의 모서리를 칠해요. 이웃 모서리와 다른 지형이면 그 사이가 자연스럽게 섞여요.')),
+        st.tool === 'blend' && h('div', {},
+          h('h4', {}, '경계 섞는 방법'),
+          h('div', { class: 'palette' }, [[1, '🌫 부드럽게 (넓게 번짐)'], [2, '🖌 거칠게 (마른 붓 자국)'], [0, '↺ 기본으로 되돌리기']].map(([v, l]) =>
+            h('button', { class: `pal ${st.blendMode === v ? 'on' : ''}`, onclick: () => { st.blendMode = v; drawSide(); } }, l))),
+          h('h4', {}, '붓 크기'),
+          h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
+          h('p', { class: 'muted', style: { fontSize: '12px' } }, '두 지형이 만나는 경계 위를 문지르세요. "부드럽게"는 경계가 넓게 페이드되며 섞이고, "거칠게"는 거친 붓으로 칠한 듯 들쭉날쭉해져요. 파란 점 = 부드럽게, 주황 점 = 거칠게.')),
+        st.tool === 'height' && h('div', {},
+          h('h4', {}, '높이'),
+          h('div', { class: 'tool-row' }, [0, 1, 2, 3].map(v => h('button', { class: `btn small ${st.hlevel === v ? 'primary' : ''}`, onclick: () => { st.hlevel = v; drawSide(); } }, v === 0 ? '0 (평지)' : v))),
+          h('h4', {}, '경계 모양'),
+          h('div', { class: 'palette' }, [['cliff', '🪨 절벽 (못 지나감)'], ['hill', '⛰ 언덕 (비탈로 오르내림)'], ['hillonly', '↗ 높이는 그대로, 비탈만 내기']].map(([v, l]) =>
+            h('button', { class: `pal ${st.hstyle === v ? 'on' : ''}`, onclick: () => { st.hstyle = v; drawSide(); } }, l))),
+          h('h4', {}, '붓 크기'),
+          h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
+          h('p', { class: 'muted', style: { fontSize: '12px' } }, '칸에 높이를 칠하면 높은 곳의 아래쪽 경계에 절벽 벽이 저절로 생겨요(경계는 구불구불). "언덕"으로 칠한 칸은 벽 대신 풀 비탈이 되고 캐릭터가 오르내릴 수 있어요. 절벽 쪽에 계단 자리를 내려면 "비탈만 내기"로 한두 칸 칠하세요. 칸의 숫자 = 높이, ↗ = 비탈.')),
         st.tool === 'event' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '맵을 누르면 그 칸에 이벤트 지점이 생겨요. 이미 있는 지점을 누르면 선택돼요. 오른쪽에서 종류와 연결할 스토리 장면을 고르세요.'),
         st.tool === 'object' && h('div', {},
           h('p', { class: 'muted', style: { fontSize: '13px' } }, '사물을 고르고 맵을 누르면 그 자리에 놓여요(누른 곳이 사물의 발밑). 놓인 사물은 끌어서 옮겨요.'),
@@ -268,15 +362,36 @@ async function editView(ctx, id) {
       const label = h('input', { value: s.label || '' });
       label.oninput = () => { s.label = label.value; markDirty(); overlay(); };
       const scenes = Object.values(M.scenes);
-      const scene = h('select', {}, h('option', { value: '' }, '(연결 안 함)'), scenes.map(sc => h('option', { value: sc.id, selected: sc.id === s.scene }, `${sc.title} [${sc.status}]`)));
-      scene.onchange = () => { s.scene = scene.value || undefined; markDirty(); };
-      const to = h('input', { value: s.to || '', placeholder: '이동할 맵 id' });
-      to.oninput = () => { s.to = to.value; markDirty(); };
+      const cur = s.scene || (Array.isArray(s.scenes) ? s.scenes[0] : '');
+      const scene = h('select', {}, h('option', { value: '' }, '(연결 안 함)'), scenes.map(sc => h('option', { value: sc.id, selected: sc.id === cur }, `${sc.title} [${sc.status}]`)));
+      scene.onchange = () => {
+        s.scene = scene.value || undefined;
+        // 게임은 scenes 목록을 읽는다. 장면이 하나뿐인 지점만 함께 맞춘다 (여러 장면이 걸린 지점은 그대로)
+        if (!Array.isArray(s.scenes) || s.scenes.length <= 1) { if (scene.value) s.scenes = [scene.value]; else delete s.scenes; }
+        markDirty();
+      };
+      // 출구: 이동할 맵 + 그 맵의 시작 위치 (to = {map, start})
+      const toObj = s.to && typeof s.to === 'object' ? s.to : { map: typeof s.to === 'string' ? s.to : '', start: '' };
+      const toMap = h('select', {}, h('option', { value: '' }, '(고르기)'), M.list.map(m => h('option', { value: m.id, selected: m.id === toObj.map }, m.name)));
+      const toStart = h('input', { value: toObj.start || '', placeholder: '그 맵의 시작 위치 id (예: ev_from_west)' });
+      const setTo = () => { s.to = { map: toMap.value, start: toStart.value.trim() }; markDirty(); };
+      toMap.onchange = setTo; toStart.oninput = setTo;
+      const zw = h('input', { type: 'number', min: 1, max: 60, value: s.w || 1, class: 'num' });
+      const zh = h('input', { type: 'number', min: 1, max: 60, value: s.h || 1, class: 'num' });
+      zw.oninput = () => { s.w = Math.max(1, Number(zw.value) || 1); markDirty(); overlay(); };
+      zh.oninput = () => { s.h = Math.max(1, Number(zh.value) || 1); markDirty(); overlay(); };
+      const multi = Array.isArray(s.scenes) && s.scenes.length > 1;
       fill(props, h('h4', { style: { marginTop: 0 } }, `이벤트 (${s.x}, ${s.y})`),
+        h('div', { class: 'muted', style: { fontSize: '11px' } }, s.id),
         h('label', { class: 'field' }, h('span', {}, '종류'), kind),
         h('label', { class: 'field' }, h('span', {}, '이름표'), label),
-        h('label', { class: 'field' }, h('span', {}, '연결할 스토리 장면'), scene),
-        s.kind === 'exit' && h('label', { class: 'field' }, h('span', {}, '이동할 맵'), to),
+        !['start', 'mark'].includes(s.kind) && h('label', { class: 'field' }, h('span', {}, s.kind === 'zone' ? '밟으면 열릴 장면' : s.kind === 'enter' ? '맵에 들어오면 열릴 장면' : '연결할 스토리 장면'), scene),
+        multi && h('div', { class: 'muted', style: { fontSize: '12px' } }, `장면 ${s.scenes.length}개가 차례로 걸려 있어요: ${s.scenes.join(', ')}`),
+        s.kind === 'zone' && h('div', { class: 'row' }, h('label', { class: 'field' }, h('span', {}, '가로 칸'), zw), h('label', { class: 'field' }, h('span', {}, '세로 칸'), zh)),
+        s.kind === 'zone' && h('p', { class: 'muted', style: { fontSize: '12px' } }, '주황 네모 안을 밟으면 장면이 한 번 열려요 (예: 마물과 마주침).'),
+        s.kind === 'exit' && h('label', { class: 'field' }, h('span', {}, '이동할 맵'), toMap),
+        s.kind === 'exit' && h('label', { class: 'field' }, h('span', {}, '도착할 시작 위치'), toStart),
+        s.kind === 'exit' && s.conditions && h('div', { class: 'muted', style: { fontSize: '12px' } }, `나갈 수 있는 조건: ${Object.entries(s.conditions).map(([k, v]) => `${k}=${v}`).join(', ')}`),
         s.scene && h('a', { href: `#/story/edit/${s.scene}` }, '스토리룸에서 이 장면 열기 →'),
         h('div', { class: 'row', style: { marginTop: '8px' } }, del));
     } else {
@@ -295,7 +410,49 @@ async function editView(ctx, id) {
   setTimeout(draw, 20);
   return h('div', {},
     h('div', { class: 'savebar' }, mapSel, zoomSel, q, h('label', { class: 'row', style: { gap: '4px' } }, gridChk, '격자'), status, h('span', { class: 'spacer' }), saveBtn),
-    h('div', { class: 'map-layout' }, side, stage, props));
+    h('div', { class: 'map-layout' }, side, stage, props),
+    mapFeedback(ctx, M.id, M.map.name));
+}
+
+// ---------- 이 맵에 대한 의견 (수정 요청) ----------
+// 요청함(data/requests.json)에 room: "map", mapId 와 함께 남긴다. Claude가 작업하면 답이 여기에도 보인다.
+function mapFeedback(ctx, mapId, mapName) {
+  const box = h('div', { class: 'card map-feedback' });
+  const list = h('ul', { class: 'list' });
+  const body = h('textarea', { placeholder: '예) 북쪽 연못을 더 크게, 길 오른쪽에 바위를 몇 개 더 놓아 주세요.' });
+  const send = h('button', { class: 'btn primary' }, '의견 보내기');
+  const statusClass = { 대기: 'warn', 진행중: 'info', 완료: 'ok', 보류: 'danger' };
+  const drawList = all => {
+    const mine = all.filter(r => r.mapId === mapId);
+    fill(list, mine.length ? mine.map(r => h('li', { class: 'req' },
+      h('span', { class: `badge ${statusClass[r.status] || ''}` }, r.status),
+      h('div', { class: 'body' },
+        h('div', { class: 'meta' }, `${r.createdBy || ''} · ${new Date(r.createdAt).toLocaleString('ko-KR')}`),
+        h('div', { class: 'text' }, r.body || r.title),
+        r.response && h('div', { class: 'resp' }, h('b', {}, '💬 Claude: '), r.response)))) : h('li', { class: 'muted' }, '아직 이 맵에 남긴 의견이 없어요.'));
+  };
+  const load = async () => {
+    try { const { data } = await ctx.store.getJSON(FEEDBACK, { requests: [] }); drawList(data.requests || []); }
+    catch (e) { fill(list, h('li', { class: 'muted' }, `의견을 불러오지 못했어요: ${e.message}`)); }
+  };
+  send.onclick = async () => {
+    const text = body.value.trim();
+    if (!text) return toast('의견을 적어 주세요.', true);
+    const now = new Date().toISOString();
+    const req = { id: newId(), room: 'map', kind: 'map_feedback', mapId, team: '맵', title: `맵 의견: ${mapName}`, body: text, status: '대기', createdAt: now, updatedAt: now, createdBy: '사용자', response: '' };
+    send.disabled = true;
+    try {
+      const data = await ctx.store.updateJSON(FEEDBACK, d => { d.requests ||= []; d.requests.unshift(req); return d; }, `맵 의견: ${mapName}`, { requests: [] });
+      body.value = ''; drawList(data.requests); ctx.refreshBadges?.();
+      toast('의견을 남겼어요. 요청함에도 들어가요. Claude에게 "요청함 처리해줘"라고 말하면 반영해요.');
+    } catch (e) { toast(e.message, true); }
+    send.disabled = false;
+  };
+  load();
+  return fill(box,
+    h('h3', { style: { marginTop: 0 } }, `💬 이 맵에 대한 의견 · ${mapName}`),
+    h('p', { class: 'muted', style: { fontSize: '13px' } }, '고쳐 주었으면 하는 점을 적어 보내면 요청함에 들어가요. Claude가 작업하면 답이 아래에 보여요.'),
+    body, h('div', { class: 'row' }, send), list);
 }
 
 async function newMap(ctx) {
@@ -333,6 +490,11 @@ async function resizeMap(ctx) {
   const nc = Number(cols.value), nr = Number(rows.value), old = M.map;
   const corners = [];
   for (let r = 0; r <= nr; r++) for (let c = 0; c <= nc; c++) corners.push(old.corners[Math.min(r, old.rows) * (old.cols + 1) + Math.min(c, old.cols)]);
+  const regrid = (arr, w0, h0, w1, h1) => { if (!Array.isArray(arr)) return arr; const out = []; for (let r = 0; r < h1; r++) for (let c = 0; c < w1; c++) out.push(r < h0 && c < w0 ? arr[r * w0 + c] : 0); return out; };
+  old.heights = regrid(old.heights, old.cols, old.rows, nc, nr);
+  old.hills = regrid(old.hills, old.cols, old.rows, nc, nr);
+  old.blend = regrid(old.blend, old.cols + 1, old.rows + 1, nc + 1, nr + 1);
+  for (const k of ['heights', 'hills', 'blend']) if (old[k] === undefined) delete old[k];
   Object.assign(old, { cols: nc, rows: nr, corners });
   old.events = old.events.filter(e => e.x < nc && e.y < nr);
   M.dirty = true; M.renderer = null;

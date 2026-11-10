@@ -102,6 +102,7 @@ export class TerrainRenderer {
   }
 
   corner(r, c) { return this.map.corners[r * (this.map.cols + 1) + c]; }
+  blendAt(r, c) { const b = this.map.blend; return b ? (b[r * (this.map.cols + 1) + c] || 0) : 0; }
 
   // Render tiles c0..c1, r0..r1 (inclusive) into the canvas.
   render(c0 = 0, r0 = 0, c1 = this.map.cols - 1, r1 = this.map.rows - 1) {
@@ -125,16 +126,29 @@ export class TerrainRenderer {
             if (idx < 0 || idx >= n) { idx = n++; ks[idx] = q[j]; ws[idx] = 0; }
             ws[idx] += qw[j];
           }
+          // 섞기 붓 (blend): 1 = 부드럽게(넓게 페이드), 2 = 거칠게(마른 붓처럼 찢긴 경계). tools/tilegen/terrain.py와 같은 계산
+          let soft = 0, rough = 0;
+          if (this.map.blend && n > 1) {
+            const bq = [this.blendAt(r, c), this.blendAt(r, c + 1), this.blendAt(r + 1, c), this.blendAt(r + 1, c + 1)];
+            for (let j = 0; j < 4; j++) { if (bq[j] === 1) soft += qw[j]; else if (bq[j] === 2) rough += qw[j]; }
+          }
           let best = -1e9;
           const sc = [0, 0, 0, 0];
           for (let j = 0; j < n; j++) {
             const k = ks[j];
-            const s = n === 1 ? 1 : ws[j] + (this.def(k).edgeAmp ?? 0.5) * this.noiseFor(k)[y * W + x] + 0.01 * k;
+            let s;
+            if (n === 1) s = 1;
+            else if (soft || rough) {
+              const amp = (this.def(k).edgeAmp ?? 0.5) * this.noiseFor(k)[y * W + x] * (1 - 0.6 * soft) * (1 + 0.8 * rough);
+              const torn = rough ? rough * (1.6 * (fbm(x / (40 * scale), y / (40 * scale), 700 + k * 13, 3) - 0.5) + 0.9 * (fbm(x / (14 * scale), y / (14 * scale), 900 + k * 7, 2) - 0.5)) : 0;
+              s = ws[j] + amp + torn + 0.01 * k;
+            } else s = ws[j] + (this.def(k).edgeAmp ?? 0.5) * this.noiseFor(k)[y * W + x] + 0.01 * k;
             sc[j] = s; if (s > best) best = s;
           }
+          const sh = soft ? sharp * (1 - soft) + 3.5 * soft : sharp;
           let tot = 0, R = 0, G = 0, B = 0, Hh = 0;
           for (let j = 0; j < n; j++) {
-            const e = Math.exp(sharp * (sc[j] - best)); tot += e; Hh += e * ks[j];
+            const e = Math.exp(sh * (sc[j] - best)); tot += e; Hh += e * ks[j];
             if (writeColor) {
               const t = this.tex[ks[j]], ti = ((y % t.h) * t.w + (x % t.w)) * 4;
               R += e * t.data[ti]; G += e * t.data[ti + 1]; B += e * t.data[ti + 2];
@@ -165,4 +179,92 @@ export class TerrainRenderer {
     }
     this.ctx.putImageData(this.img, 0, 0, x0, y0, x1 - x0, y1 - y0);
   }
+}
+
+// ---------- 높낮이 (높이 붓): 높은 칸 아래쪽 경계에 절벽 벽 / 언덕 비탈을 그린다 ----------
+// 게임의 tools/sync_game.py apply_heights와 같은 생각: 칸 높이 → 잡음으로 구불구불한 경계 → 아래쪽에 벽.
+export const CLIFF_FACE = 'assets/_inbox/codex/CX-018/cliff_face_strip.png';
+export const CLIFF_LIP = 'assets/_inbox/codex/CX-018/cliff_grass_lip.png';
+
+// 위아래 빈 띠를 잘라 낸 절벽 띠 그림 (없으면 null)
+export async function loadStrip(store, file) {
+  try {
+    const img = new Image();
+    img.src = await store.blobUrl(file);
+    await img.decode();
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    let top = -1, bot = -1;
+    for (let y = 0; y < c.height; y++) {
+      let s = 0;
+      for (let x = 0; x < c.width; x += 4) { const i = (y * c.width + x) * 4; s += (d[i] + d[i + 1] + d[i + 2]) / 3 * d[i + 3] / 255; }
+      if (s / (c.width / 4) > 25) { if (top < 0) top = y; bot = y; }
+    }
+    if (top < 0) return null;
+    const o = document.createElement('canvas'); o.width = c.width; o.height = bot - top + 1;
+    o.getContext('2d').drawImage(c, 0, top, c.width, o.height, 0, 0, c.width, o.height);
+    return o;
+  } catch { return null; }
+}
+
+export function hasHeights(map) { return Array.isArray(map.heights) && map.heights.some(v => v > 0); }
+
+// g: 바닥 그림이 그려진 캔버스(배율 scale)의 2d 문맥. strips: {face, lip}
+export function drawHeights(g, map, scale, strips, cache = {}) {
+  if (!hasHeights(map)) return;
+  const { cols, rows } = map, T = TILE * scale;
+  const W = Math.round(cols * TILE * scale), H = Math.round(rows * TILE * scale);
+  if (!cache.noise || cache.noise.length !== W * H) {
+    const cell = Math.max(48, (cols * TILE * scale) / Math.max(6, cols >> 1));
+    cache.noise = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) cache.noise[y * W + x] = fbm(x / cell, y / cell, 4242, 4) - 0.5;
+  }
+  const hAt = (r, c) => map.heights[Math.min(rows - 1, Math.max(0, r)) * cols + Math.min(cols - 1, Math.max(0, c))] || 0;
+  const hillAt = (r, c) => (map.hills || [])[Math.min(rows - 1, Math.max(0, r)) * cols + Math.min(cols - 1, Math.max(0, c))] > 0;
+  const img = g.getImageData(0, 0, W, H), d = img.data;
+  const face = strips?.face, lip = strips?.lip;
+  const faceH = Math.max(4, Math.round(T)), lipH = Math.max(3, Math.round(faceH / 3));
+  const sample = (cv, hh) => { if (!cv) return null; const c = document.createElement('canvas'); c.width = Math.round(cv.width * hh / cv.height); c.height = hh; c.getContext('2d').drawImage(cv, 0, 0, c.width, hh); return { w: c.width, h: hh, d: c.getContext('2d').getImageData(0, 0, c.width, hh).data }; };
+  const F = sample(face, faceH), Lp = sample(lip, lipH);
+  const maxH = Math.max(...map.heights);
+  for (let lvl = 1; lvl <= maxH; lvl++) {
+    const plat = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) {
+      const ty = (y + 0.5) / T - 0.5, r0 = Math.floor(ty), fy = ty - r0;
+      for (let x = 0; x < W; x++) {
+        const tx = (x + 0.5) / T - 0.5, c0 = Math.floor(tx), fx = tx - c0;
+        const v = (hAt(r0, c0) >= lvl) * (1 - fx) * (1 - fy) + (hAt(r0, c0 + 1) >= lvl) * fx * (1 - fy) + (hAt(r0 + 1, c0) >= lvl) * (1 - fx) * fy + (hAt(r0 + 1, c0 + 1) >= lvl) * fx * fy;
+        plat[y * W + x] = v + 0.55 * cache.noise[y * W + x] > 0.5 ? 1 : 0;
+      }
+    }
+    for (let x = 0; x < W; x++) {
+      for (let yb = 0; yb < H - 1; yb++) {
+        if (!(plat[yb * W + x] && !plat[(yb + 1) * W + x])) continue;
+        const hill = hillAt(Math.floor((yb - 20 * scale) / T), Math.floor(x / T)) || hillAt(Math.floor(yb / T), Math.floor(x / T));
+        for (let v = 0; v < faceH && yb + 1 + v < H; v++) {
+          const y = yb + 1 + v, i = (y * W + x) * 4;
+          if (plat[y * W + x]) break;
+          if (hill) { const k = 0.70 + 0.30 * Math.pow(v / faceH, 0.7); d[i] *= k; d[i + 1] *= k; d[i + 2] *= k; continue; }
+          const k = 0.82 + 0.18 * (1 - v / faceH);
+          if (F) { const fi = (v * F.w + (x % F.w)) * 4, a = F.d[fi + 3] / 255, rk = 118 * (1 - a), gk = 104 * (1 - a), bk = 88 * (1 - a); d[i] = (F.d[fi] * a + rk) * k; d[i + 1] = (F.d[fi + 1] * a + gk) * k; d[i + 2] = (F.d[fi + 2] * a + bk) * k; }
+          else { d[i] = 118 * k; d[i + 1] = 104 * k; d[i + 2] = 88 * k; }
+        }
+        if (hill) continue;
+        for (let v = 0; v < 20 * scale; v++) {           // 절벽 발치 그늘
+          const y = yb + 1 + faceH + v; if (y >= H || plat[y * W + x]) break;
+          const i = (y * W + x) * 4, k = 0.64 + 0.36 * v / (20 * scale); d[i] *= k; d[i + 1] *= k; d[i + 2] *= k;
+        }
+        if (Lp) {                                          // 위 가장자리에 늘어진 풀
+          const top = yb - Math.floor(lipH / 3);
+          for (let v = 0; v < lipH; v++) {
+            const y = top + v; if (y < 0 || y >= H) continue;
+            const li = (v * Lp.w + (x % Lp.w)) * 4, a = Lp.d[li + 3] / 255, i = (y * W + x) * 4;
+            d[i] = d[i] * (1 - a) + Lp.d[li] * a; d[i + 1] = d[i + 1] * (1 - a) + Lp.d[li + 1] * a; d[i + 2] = d[i + 2] * (1 - a) + Lp.d[li + 2] * a;
+          }
+        }
+      }
+    }
+  }
+  g.putImageData(img, 0, 0);
 }
