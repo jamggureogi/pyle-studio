@@ -309,7 +309,7 @@ async function editView(ctx, id) {
     const objAssets = M.assets.filter(a => ['object', 'decor'].includes(a.kind) && a.status !== '보관');
     fill(side, 
       h('div', { class: 'card' },
-        h('div', { class: 'tool-row' }, tools.map(([t, l]) => h('button', { class: `btn small ${st.tool === t ? 'primary' : ''}`, onclick: () => { st.tool = t; drawSide(); } }, l))),
+        h('div', { class: 'tool-row' }, tools.map(([t, l]) => h('button', { class: `btn small ${st.tool === t ? 'primary' : ''}`, onclick: () => { st.tool = t; drawSide(); overlay(); } }, l))),
         st.tool === 'terrain' && h('div', {},
           h('h4', {}, '지형'),
           h('div', { class: 'palette' }, M.map.terrains.map((id, i) => {
