@@ -82,6 +82,7 @@ function card(ctx, t, reg) {
       h('h2', { style: { margin: 0, flex: 1 } }, t.title),
       h('span', { class: `badge ${STATUS[t.status] || ''}` }, t.status)),
     h('div', { class: 'muted', style: { fontSize: '12px', margin: '4px 0 8px' } },
+      t.team && h('span', { class: 'badge info', style: { marginRight: '6px' } }, `${t.team} 팀`),
       `우선순위 ${t.priority} · ${KINDS[t.kind] || t.kind} · ${t.count}장 · ${t.size}`, t.illustrationKey && ` · 일러스트 칸 ${t.illustrationKey}`, t.owner && ` · 인물 ${t.owner}`, ` · ${t.createdBy} ${t.createdAt || ''}`),
     h('div', { class: 'row out' }, h('span', { class: 'muted' }, '결과 넣을 곳'), h('code', {}, t.outputDir), h('button', { class: 'btn small', onclick: () => copy(t.outputDir) }, '복사')),
     t.holdNote && t.status === '보류' && h('p', { class: 'notes hold' }, '⏸ ', t.holdNote),
