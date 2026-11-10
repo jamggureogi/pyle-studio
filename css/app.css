@@ -351,6 +351,24 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .ui-drag{cursor:move;outline:1px dashed rgba(232,212,154,.55);outline-offset:2px;border-radius:3px}
 .ui-grab{position:absolute;z-index:4;cursor:move;outline:2px dashed rgba(120,190,255,.7);outline-offset:-2px}
 .ui-grab:hover{background:rgba(120,190,255,.08)}
+/* dialogue tab: divider between the portrait area and the text area, and the portrait box top */
+.ui-split,.ui-ptop{position:absolute;z-index:6;display:flex;align-items:center;justify-content:center}
+.ui-split{width:26px;margin-left:-13px;cursor:col-resize}
+.ui-ptop{height:26px;margin-top:-13px;cursor:row-resize}
+.ui-split::before,.ui-ptop::before{content:"";position:absolute;background:#ffcf5a;box-shadow:0 0 0 1px rgba(0,0,0,.55)}
+.ui-split::before{top:0;bottom:0;left:50%;width:3px;margin-left:-1.5px}
+.ui-ptop::before{left:0;right:0;top:50%;height:3px;margin-top:-1.5px}
+.ui-split i,.ui-ptop i{position:relative;display:flex;align-items:center;justify-content:center;background:#ffcf5a;color:#3a2c08;border:1px solid rgba(0,0,0,.55);border-radius:6px;font-style:normal;font-size:12px;line-height:1}
+.ui-split i{width:16px;height:34px}
+.ui-ptop i{width:34px;height:16px}
+.ui-split i::before{content:"↔"}
+.ui-ptop i::before{content:"↕"}
+.ui-split.off{opacity:.55}
+.ui-split:hover,.ui-ptop:hover{filter:brightness(1.15)}
+.ui-parea{position:absolute;z-index:3;pointer-events:none;border:1px dashed rgba(255,207,90,.7);box-sizing:border-box}
+.ui-check{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px;cursor:pointer}
+.ui-check input{width:18px;height:18px}
+.ui-pick{margin:6px 0;font-size:13px}
 .ui-val{width:52px;text-align:right}
 .small{font-size:12px}
 .ui-hud{position:absolute;z-index:3;cursor:move;touch-action:none}

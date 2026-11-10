@@ -1,7 +1,7 @@
 // UI room: lay out the game's screens by hand. Everything here is saved to data/ui.json
 // (and portrait positions to data/characters.json) and the game reads the same values.
 import { h, toast, fill } from '../ui.js';
-import { portraitLayer, frameFor, applyDialogue, DEFAULT_DIALOGUE, forgetDialogueLayout, loadDialogueLayout, layoutStage, LAYOUT } from '../portrait.js';
+import { portraitLayer, frameFor, applyDialogue, DEFAULT_DIALOGUE, forgetDialogueLayout, loadDialogueLayout, layoutStage, portraitArea } from '../portrait.js';
 
 const UI = 'data/ui.json';
 const CHARS = 'data/characters.json';
@@ -108,6 +108,23 @@ function dragOn(el, onMove, onEnd) {
 const pct = v => `${Math.round(v * 100)}%`;
 
 // ---------- 대화창 ----------
+//
+// What this tab saves (data/ui.json → dialogue; the game reads the same keys in story_player.gd):
+//   box            { left, bottom, height }      dialogue box, fractions of the 16:9 screen
+//   portrait       { faceX, chinY, eyeToChin }   face anchor used by "직접 맞추기" (manual fit)
+//   name / text    { x, y, size }                nudge (px on a 1280×720 screen) and font size
+//   noPortraitPad  left padding of lines without a portrait
+//   split          { on, side, left, right, flipRight }
+//                  on = split the box into a portrait area and a text area with a divider;
+//                  side = where the portrait is; left / right = the divider x for each side
+//                  (fraction of the screen width); flipRight = mirror the picture on the right.
+//                  The picture is cut at the divider only; it may spill over the outer edge and the top.
+//   portraitFit    'manual' | 'fill'   fill = picture height = portrait box height (needs split.on)
+//   portraitBox    { top }             top of the portrait box (fraction of the screen height);
+//                                      its bottom is always the dialogue box bottom
+//   textPad        { top, portraitSide, edgeSide }   padding of the text area (px on 1280×720)
+// Per-portrait scale / dx / dy (data/characters.json → portraitFrame(s)) still apply in both fits;
+// "모든 초상화를 박스에 채우기" turns fill on and resets them all to scale 1, dx 0, dy 0.
 
 function dialogueTab(ctx) {
   const d = U.dialogue;
@@ -115,24 +132,77 @@ function dialogueTab(ctx) {
   const st = U.dlg ||= { char: people[0]?.id, emo: 'normal', bg: Object.entries(U.story.illustrations || {}).find(([, v]) => v.file)?.[0] || '', text: '대사가 여기에 나와요. 이름과 본문을 끌어서 위치를 맞춰 보세요.' };
   const charOf = id => U.chars.characters.find(c => c.id === id);
   const emoLabel = e => U.chars.emotions?.[e] || e;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
   const stage = h('div', { class: 'pv-stage ui-stage' });
   const ctrl = h('div', { class: 'ui-ctrl' });
-  let layer = null;
+  let layer = null, live = null, grab = null;
+  const ek = () => `${st.char}/${st.emo}`;
+  const side = () => (d.split.side === 'right' ? 'right' : 'left');
+  const dir = () => (d.split.on && side() === 'right' ? -1 : 1);
 
   const working = () => {
-    const c = charOf(st.char);
-    const f = frameFor(c, st.emo);
-    const e = U.frameEdits[`${st.char}/${st.emo}`];
+    const f = frameFor(charOf(st.char), st.emo);
+    const e = U.frameEdits[ek()];
     return e ? { ...f, ...e } : f;
   };
-  const fakeChar = () => {
-    const c = charOf(st.char);
-    return { ...c, portraitFrames: { ...(c.portraitFrames || {}), [st.emo]: working() } };
-  };
+  const setFrame = patch => { const w = working(); U.frameEdits[ek()] = { dx: w.dx, dy: w.dy, scale: w.scale, ...patch }; update(); };
+
+  // handles that sit on the stage: divider (left↔right), portrait box top (up↕down), box outline
+  const splitBar = h('div', { class: 'ui-split', title: '끌어서 초상화 영역과 글 영역 나누기' }, h('i'));
+  const topBar = h('div', { class: 'ui-ptop', title: '끌어서 초상화 박스 높이 바꾸기' }, h('i'));
+  const area = h('div', { class: 'ui-parea' });
+  const splitRange = () => (side() === 'right' ? [0.45, 1 - d.box.left - 0.06] : [d.box.left + 0.06, 0.55]);
+  const topMax = () => 1 - d.box.bottom - 0.08;
+  dragOn(splitBar, dx => {
+    const [a, b] = splitRange();
+    const was = d.split.on;
+    d.split.on = true;
+    d.split[side()] = clamp(d.split[side()] + dx / stage.clientWidth, a, b);
+    update();
+    if (!was) drawCtrl(); else S.split?.set(d.split[side()]);
+  });
+  dragOn(topBar, (dx, dy) => {
+    d.portraitBox.top = clamp(d.portraitBox.top + dy / stage.clientHeight, 0, topMax());
+    update();
+    S.top?.set(d.portraitBox.top);
+  });
+  const S = {}; // sliders that follow the handles
+
+  function placeHandles() {
+    const W = stage.clientWidth, H = stage.clientHeight;
+    const a = portraitArea(W, H, side());
+    const sx = d.split[side()] * W;
+    const fillOn = d.split.on && d.portraitFit === 'fill';
+    const boxTop = (1 - d.box.bottom - d.box.height) * H;
+    const top = fillOn ? Math.min(a.top, boxTop) : boxTop;
+    Object.assign(splitBar.style, { left: `${sx}px`, top: `${top}px`, height: `${a.bottom - top}px` });
+    splitBar.classList.toggle('off', !d.split.on);
+    topBar.style.display = area.style.display = fillOn ? '' : 'none';
+    Object.assign(topBar.style, { left: `${a.x0}px`, width: `${a.x1 - a.x0}px`, top: `${a.top}px` });
+    Object.assign(area.style, { left: `${a.x0}px`, width: `${a.x1 - a.x0}px`, top: `${a.top}px`, height: `${a.bottom - a.top}px` });
+    if (grab) {
+      // over the part of the portrait you can see
+      const r = layer?._rect;
+      if (!r) { grab.style.display = 'none'; return; }
+      const x0 = Math.max(0, r.left, d.split.on && side() === 'right' ? sx : 0), x1 = Math.min(W, r.left + r.width, d.split.on && side() === 'left' ? sx : W);
+      const y0 = Math.max(0, r.top), y1 = Math.min(a.bottom, r.top + r.height);
+      Object.assign(grab.style, { display: x1 > x0 && y1 > y0 ? '' : 'none', left: `${x0}px`, top: `${y0}px`, width: `${x1 - x0}px`, height: `${y1 - y0}px` });
+    }
+  }
+
+  // re-place everything without rebuilding the stage (keeps a drag going)
+  function update() {
+    applyDialogue(d);
+    if (live) live.portraitFrames[st.emo] = working();
+    if (layer) layer._fit(); else layoutStage(stage);
+    placeHandles();
+    syncSliders();
+  }
 
   async function drawStage() {
     const c = charOf(st.char);
+    applyDialogue(d);
     const bgFile = U.story.illustrations?.[st.bg]?.file;
     const scene = h('div', { class: 'pv-scene' });
     if (bgFile) ctx.store.blobUrl(bgFile).then(u => { scene.style.backgroundImage = `url(${u})`; });
@@ -143,42 +213,32 @@ function dialogueTab(ctx) {
     const k = () => stage.clientWidth / REF_W;
     dragOn(name, (dx, dy) => { d.name.x += dx / k(); d.name.y += dy / k(); layoutStage(stage); });
     dragOn(text, (dx, dy) => { d.text.x += dx / k(); d.text.y += dy / k(); layoutStage(stage); });
-    layer = null;
+    layer = null; grab = null; live = null;
     const file = c?.portraits?.[st.emo] || c?.portraits?.normal;
+    const mine = ek();
     if (file) {
       const u = await ctx.store.blobUrl(file);
-      layer = portraitLayer(u, fakeChar(), st.emo);
-      stage.append(layer);
+      if (mine !== ek()) return;   // another portrait was picked meanwhile
+      live = { ...c, portraitFrames: { ...(c.portraitFrames || {}), [st.emo]: working() } };
+      layer = portraitLayer(u, live, st.emo);
+      layer._onfit = placeHandles;
       // a grab handle over the portrait (the layer itself ignores the mouse)
-      const grab = h('div', { class: 'ui-grab', title: '끌어서 초상화 옮기기 · 휠로 크기' });
-      stage.append(grab);
-      const place = () => {
-        const img = layer.querySelector('img');
-        if (!img) return;
-        Object.assign(grab.style, { left: img.style.left, top: img.style.top, width: img.style.width, height: `${Math.min(parseFloat(img.style.height), stage.clientHeight * (1 - LAYOUT.boxBottom) - parseFloat(img.style.top))}px` });
-      };
-      const refit = () => { layer.remove(); layer = portraitLayer(u, fakeChar(), st.emo); stage.insertBefore(layer, grab); setTimeout(place, 30); syncSliders(); };
-      layer.querySelector('img').addEventListener('load', () => setTimeout(place, 30));
-      dragOn(grab, (dx, dy) => {
-        const w = working();
-        U.frameEdits[`${st.char}/${st.emo}`] = { dx: w.dx + dx / stage.clientWidth, dy: w.dy + dy / stage.clientHeight, scale: w.scale };
-        refit();
-      });
+      grab = h('div', { class: 'ui-grab', title: '끌어서 초상화 옮기기 · 휠로 크기' });
+      stage.append(layer, grab);
+      dragOn(grab, (dx, dy) => { const w = working(); setFrame({ dx: w.dx + dir() * dx / stage.clientWidth, dy: w.dy + dy / stage.clientHeight }); });
       grab.addEventListener('wheel', e => {
         e.preventDefault();
-        const w = working();
-        U.frameEdits[`${st.char}/${st.emo}`] = { dx: w.dx, dy: w.dy, scale: Math.max(0.4, Math.min(2, w.scale * (e.deltaY < 0 ? 1.03 : 0.97))) };
-        refit();
+        setFrame({ scale: clamp(working().scale * (e.deltaY < 0 ? 1.03 : 0.97), 0.4, 2) });
       }, { passive: false });
-      stage._refit = refit;
     }
-    requestAnimationFrame(() => layoutStage(stage));
+    stage.append(area, topBar, splitBar);
+    requestAnimationFrame(() => { if (!layer) layoutStage(stage); placeHandles(); });
   }
 
   // portrait controls
-  const sScale = slider('크기', working().scale, 0.4, 2, 0.01, v => { const w = working(); U.frameEdits[`${st.char}/${st.emo}`] = { dx: w.dx, dy: w.dy, scale: v }; stage._refit?.(); }, pct);
-  const sDx = slider('좌우', working().dx, -0.2, 0.2, 0.002, v => { const w = working(); U.frameEdits[`${st.char}/${st.emo}`] = { dx: v, dy: w.dy, scale: w.scale }; stage._refit?.(); }, v => (v * 100).toFixed(1));
-  const sDy = slider('위아래', working().dy, -0.25, 0.25, 0.002, v => { const w = working(); U.frameEdits[`${st.char}/${st.emo}`] = { dx: w.dx, dy: v, scale: w.scale }; stage._refit?.(); }, v => (v * 100).toFixed(1));
+  const sScale = slider('크기', working().scale, 0.4, 2, 0.01, v => setFrame({ scale: v }), pct);
+  const sDx = slider('좌우', working().dx, -0.2, 0.2, 0.002, v => setFrame({ dx: v }), v => (v * 100).toFixed(1));
+  const sDy = slider('위아래', working().dy, -0.25, 0.25, 0.002, v => setFrame({ dy: v }), v => (v * 100).toFixed(1));
   function syncSliders() { const w = working(); sScale.set(w.scale); sDx.set(w.dx); sDy.set(w.dy); }
 
   async function savePortrait(all) {
@@ -205,6 +265,27 @@ function dialogueTab(ctx) {
     } catch (e) { toast(e.message, true); }
   }
 
+  const r4 = v => Number(Number(v).toFixed(4));
+  const tidy = () => { d.split.left = r4(d.split.left); d.split.right = r4(d.split.right); d.portraitBox.top = r4(d.portraitBox.top); d.name.x = Math.round(d.name.x); d.name.y = Math.round(d.name.y); d.text.x = Math.round(d.text.x); d.text.y = Math.round(d.text.y); };
+  const saveDialogue = () => saveUi(ctx, 'dialogue', (tidy(), structuredClone(d)), '대화창 배치 저장').then(() => { Object.assign(d, U.dialogue); U.dialogue = d; applyDialogue(d); }).catch(e => toast(e.message, true));
+
+  // Every portrait of every character: fill the portrait box (and forget the hand-made size/position).
+  async function fillAll() {
+    if (!confirm('모든 인물·모든 표정의 초상화를 박스 높이에 맞춰 채울까요?\n지금까지 손으로 맞춘 크기·위치는 모두 처음 값으로 돌아가요. (채운 뒤에 다시 하나씩 다듬을 수 있어요)')) return;
+    const reset = f => Object.assign(f, { scale: 1, dx: 0, dy: 0 });
+    const wipe = x => { if (x.portraitFrame) reset(x.portraitFrame); for (const f of Object.values(x.portraitFrames || {})) reset(f); };
+    try {
+      await ctx.store.updateJSON(CHARS, data => { for (const x of data.characters || []) wipe(x); return data; }, '대화창 초상화: 모두 박스에 채우기');
+      for (const x of U.chars.characters) wipe(x);
+      U.frameEdits = {};
+      d.split.on = true;
+      d.portraitFit = 'fill';
+      await saveDialogue();
+      drawCtrl(); drawStage();
+      toast('모든 초상화를 박스에 채웠어요. 인물·표정을 바꿔 가며 확인해 보세요.');
+    } catch (e) { toast(e.message, true); }
+  }
+
   const charSel = h('select', {}, people.map(c => h('option', { value: c.id, selected: c.id === st.char }, c.displayName || c.name)));
   const emoSel = h('select');
   const fillEmo = () => {
@@ -222,46 +303,81 @@ function dialogueTab(ctx) {
   const textIn = h('input', { value: st.text });
   textIn.oninput = () => { st.text = textIn.value; const t = stage.querySelector('.pv-text'); if (t) t.textContent = st.text; };
 
-  // box & text controls (global)
-  const relayout = () => { applyDialogue(d); U.dialogue = d; drawStage(); };
-  fill(ctrl,
-    h('div', { class: 'card' },
-      h('h4', { style: { marginTop: 0 } }, '미리 볼 장면'),
-      h('label', { class: 'field' }, h('span', {}, '인물'), charSel),
-      h('label', { class: 'field' }, h('span', {}, '표정'), emoSel),
-      h('label', { class: 'field' }, h('span', {}, '배경'), bgSel),
-      h('label', { class: 'field' }, h('span', {}, '대사'), textIn)),
-    h('div', { class: 'card' },
-      h('h4', { style: { marginTop: 0 } }, '초상화 (이 인물 · 이 표정)'),
-      h('p', { class: 'muted small' }, '초상화를 끌어서 옮기고, 마우스 휠이나 아래 칸으로 크기를 바꿔요. 표정마다 얼굴 크기·위치가 달라도 괜찮아요.'),
-      sScale, sDx, sDy,
-      h('div', { class: 'row' },
-        h('button', { class: 'btn small primary', onclick: () => savePortrait(false) }, '이 표정만 저장'),
-        h('button', { class: 'btn small', onclick: () => savePortrait(true) }, '모든 표정에 같은 값'),
-        h('button', { class: 'btn small', onclick: () => { delete U.frameEdits[`${st.char}/${st.emo}`]; syncSliders(); drawStage(); } }, '되돌리기'))),
-    h('div', { class: 'card' },
-      h('h4', { style: { marginTop: 0 } }, '글자 (모든 대화 공통)'),
-      h('p', { class: 'muted small' }, '이름과 본문은 화면에서 직접 끌어서 옮길 수 있어요.'),
-      slider('이름 크기', d.name.size, 14, 34, 1, v => { d.name.size = v; layoutStage(stage); }, v => `${v}px`),
-      slider('본문 크기', d.text.size, 14, 34, 1, v => { d.text.size = v; layoutStage(stage); }, v => `${v}px`),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn small', onclick: () => { d.name.x = 0; d.name.y = 0; layoutStage(stage); } }, '이름 위치 처음대로'),
-        h('button', { class: 'btn small', onclick: () => { d.text.x = 0; d.text.y = 0; layoutStage(stage); } }, '본문 위치 처음대로'))),
-    h('div', { class: 'card' },
-      h('h4', { style: { marginTop: 0 } }, '대화창 틀 · 초상화 기준 (모든 대화 공통)'),
-      slider('창 높이', d.box.height, 0.18, 0.4, 0.005, v => { d.box.height = v; relayout(); }, pct),
-      slider('창 아래 여백', d.box.bottom, 0, 0.2, 0.005, v => { d.box.bottom = v; relayout(); }, pct),
-      slider('창 좌우 여백', d.box.left, 0, 0.1, 0.002, v => { d.box.left = v; relayout(); }, pct),
-      slider('얼굴 가로 위치', d.portrait.faceX, 0.05, 0.3, 0.002, v => { d.portrait.faceX = v; relayout(); }, pct),
-      slider('턱 높이', d.portrait.chinY, 0.55, 0.85, 0.002, v => { d.portrait.chinY = v; relayout(); }, pct),
-      slider('기본 얼굴 크기', d.portrait.eyeToChin, 0.05, 0.12, 0.001, v => { d.portrait.eyeToChin = v; relayout(); }, v => (v * 1000).toFixed(0)),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn small primary', onclick: () => saveUi(ctx, 'dialogue', structuredClone(d), '대화창 배치 저장').catch(e => toast(e.message, true)) }, '대화창 설정 저장'),
-        h('button', { class: 'btn small', onclick: () => { Object.assign(d, structuredClone(DEFAULT_DIALOGUE)); relayout(); toast('처음 값으로 돌렸어요. 저장해야 반영돼요.'); } }, '처음 값으로'))));
+  const pick = (label, on, fn) => h('button', { class: `btn small ${on ? 'primary' : ''}`, onclick: () => { fn(); update(); drawCtrl(); } }, label);
+  const check = (label, on, fn) => { const c = h('input', { type: 'checkbox', checked: on || undefined }); c.onchange = () => { fn(c.checked); update(); drawCtrl(); }; return h('label', { class: 'ui-check' }, c, h('span', {}, label)); };
+  const saveBtn = () => h('button', { class: 'btn small primary', onclick: saveDialogue }, '대화창 설정 저장');
+  const px = v => `${Math.round(v)}px`;
 
+  function drawCtrl() {
+    const sp = d.split.on, fillOn = sp && d.portraitFit === 'fill';
+    const [sa, sb] = splitRange();
+    S.split = sp ? slider('나누는 선', clamp(d.split[side()], sa, sb), sa, sb, 0.002, v => { d.split[side()] = v; update(); }, pct) : null;
+    S.top = fillOn ? slider('박스 위쪽 끝', d.portraitBox.top, 0, topMax(), 0.002, v => { d.portraitBox.top = v; update(); }, pct) : null;
+    fill(ctrl,
+      h('div', { class: 'card' },
+        h('h4', { style: { marginTop: 0 } }, '미리 볼 장면'),
+        h('label', { class: 'field' }, h('span', {}, '인물'), charSel),
+        h('label', { class: 'field' }, h('span', {}, '표정'), emoSel),
+        h('label', { class: 'field' }, h('span', {}, '배경'), bgSel),
+        h('label', { class: 'field' }, h('span', {}, '대사'), textIn)),
+      h('div', { class: 'card' },
+        h('h4', { style: { marginTop: 0 } }, '초상화 영역 · 글 영역 (모든 대화 공통)'),
+        check('영역 나누기 쓰기', sp, v => { d.split.on = v; }),
+        h('p', { class: 'muted small' }, sp
+          ? '화면의 세로 선(↔)을 좌우로 끌어서 초상화 영역과 글 영역을 나눠요. 초상화는 글 쪽으로 넘치면 선에서 잘리고, 대화창 바깥쪽으로 넘치는 부분은 그대로 보여요.'
+          : '지금은 예전 방식이에요 (초상화를 자르지 않고 글이 알아서 옆으로 비켜요). 화면의 세로 선을 끌거나 위 칸을 켜면 영역을 직접 나눌 수 있어요.'),
+        sp && h('div', { class: 'row ui-pick' }, h('span', { class: 'fit-label' }, '초상화 자리'),
+          pick('왼쪽', side() === 'left', () => { d.split.side = 'left'; }),
+          pick('오른쪽', side() === 'right', () => { d.split.side = 'right'; })),
+        sp && h('p', { class: 'muted small' }, '왼쪽일 때와 오른쪽일 때의 선 위치는 따로 기억해요.'),
+        S.split,
+        sp && side() === 'right' && check('오른쪽일 때 그림 좌우 뒤집기', d.split.flipRight, v => { d.split.flipRight = v; }),
+        sp && h('div', { class: 'row ui-pick' }, h('span', { class: 'fit-label' }, '맞추는 방법'),
+          pick('직접 맞추기', !fillOn, () => { d.portraitFit = 'manual'; }),
+          pick('박스에 채우기', fillOn, () => { d.portraitFit = 'fill'; })),
+        fillOn && h('p', { class: 'muted small' }, '초상화가 박스 높이에 꽉 차게 들어가요. 박스 아래쪽은 대화창 바닥에 붙어 있고, 화면의 가로 선(↕)을 위아래로 끌어서 박스 높이를 바꿔요.'),
+        S.top,
+        h('div', { class: 'row', style: { marginTop: '8px' } },
+          h('button', { class: 'btn small', onclick: fillAll }, '모든 초상화를 박스에 채우기 (한꺼번에)'),
+          saveBtn())),
+      h('div', { class: 'card' },
+        h('h4', { style: { marginTop: 0 } }, '초상화 (이 인물 · 이 표정)'),
+        h('p', { class: 'muted small' }, fillOn
+          ? '박스에 채운 상태에서 이 표정만 조금 더 다듬을 수 있어요. 초상화를 끌어서 옮기고, 마우스 휠이나 아래 칸으로 크기를 바꿔요.'
+          : '초상화를 끌어서 옮기고, 마우스 휠이나 아래 칸으로 크기를 바꿔요. 표정마다 얼굴 크기·위치가 달라도 괜찮아요.'),
+        sScale, sDx, sDy,
+        h('div', { class: 'row' },
+          h('button', { class: 'btn small primary', onclick: () => savePortrait(false) }, '이 표정만 저장'),
+          h('button', { class: 'btn small', onclick: () => savePortrait(true) }, '모든 표정에 같은 값'),
+          h('button', { class: 'btn small', onclick: () => { delete U.frameEdits[ek()]; update(); } }, '되돌리기'))),
+      h('div', { class: 'card' },
+        h('h4', { style: { marginTop: 0 } }, '글자 · 글 영역 여백 (모든 대화 공통)'),
+        h('p', { class: 'muted small' }, '이름과 본문은 화면에서 직접 끌어서 옮길 수 있어요. 여백은 글 영역 안쪽에서 글자를 얼마나 띄울지예요.'),
+        slider('위 여백', d.textPad.top, 0, 90, 1, v => { d.textPad.top = v; update(); }, px),
+        slider(sp ? '초상화 쪽 여백' : '오른쪽 여백', sp ? d.textPad.portraitSide : d.textPad.edgeSide, 0, 140, 1, v => { d.textPad[sp ? 'portraitSide' : 'edgeSide'] = v; update(); }, px),
+        sp && slider('창 가장자리 쪽 여백', d.textPad.edgeSide, 0, 140, 1, v => { d.textPad.edgeSide = v; update(); }, px),
+        slider('이름 크기', d.name.size, 14, 34, 1, v => { d.name.size = v; layoutStage(stage); }, v => `${v}px`),
+        slider('본문 크기', d.text.size, 14, 34, 1, v => { d.text.size = v; layoutStage(stage); }, v => `${v}px`),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn small', onclick: () => { d.name.x = 0; d.name.y = 0; layoutStage(stage); } }, '이름 위치 처음대로'),
+          h('button', { class: 'btn small', onclick: () => { d.text.x = 0; d.text.y = 0; layoutStage(stage); } }, '본문 위치 처음대로'))),
+      h('div', { class: 'card' },
+        h('h4', { style: { marginTop: 0 } }, '대화창 틀 · 초상화 기준 (모든 대화 공통)'),
+        slider('창 높이', d.box.height, 0.18, 0.4, 0.005, v => { d.box.height = v; update(); }, pct),
+        slider('창 아래 여백', d.box.bottom, 0, 0.2, 0.005, v => { d.box.bottom = v; update(); }, pct),
+        slider('창 좌우 여백', d.box.left, 0, 0.1, 0.002, v => { d.box.left = v; update(); }, pct),
+        !fillOn && slider('얼굴 가로 위치', d.portrait.faceX, 0.05, 0.3, 0.002, v => { d.portrait.faceX = v; update(); }, pct),
+        !fillOn && slider('턱 높이', d.portrait.chinY, 0.55, 0.85, 0.002, v => { d.portrait.chinY = v; update(); }, pct),
+        !fillOn && slider('기본 얼굴 크기', d.portrait.eyeToChin, 0.05, 0.12, 0.001, v => { d.portrait.eyeToChin = v; update(); }, v => (v * 1000).toFixed(0)),
+        h('div', { class: 'row' },
+          saveBtn(),
+          h('button', { class: 'btn small', onclick: () => { Object.assign(d, structuredClone(DEFAULT_DIALOGUE)); update(); drawCtrl(); toast('처음 값으로 돌렸어요. 저장해야 반영돼요.'); } }, '처음 값으로'))));
+  }
+
+  drawCtrl();
   setTimeout(drawStage, 20);
-  window.addEventListener('resize', () => { if (stage.isConnected) drawStage(); });
-  return h('div', { class: 'ui-wrap' }, h('div', { class: 'ui-main' }, stage, h('p', { class: 'muted small' }, '초상화·이름·본문을 끌어서 옮겨 보세요. 인물·표정을 바꿔 가며 확인할 수 있어요.')), ctrl);
+  window.addEventListener('resize', () => { if (stage.isConnected) placeHandles(); });
+  return h('div', { class: 'ui-wrap' }, h('div', { class: 'ui-main' }, stage, h('p', { class: 'muted small' }, '초상화·이름·본문을 끌어서 옮겨 보세요. 세로 선(↔)은 초상화 영역과 글 영역을 나누고, 가로 선(↕)은 초상화 박스 높이를 바꿔요.')), ctrl);
 }
 
 // ---------- 필드 화면 ----------
