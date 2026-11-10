@@ -391,3 +391,8 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .fx-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media (max-width:700px){.fx-cols{grid-template-columns:1fr}}
 .fx-row{display:grid;grid-template-columns:72px 1fr 40px;align-items:center;gap:6px;font-size:13px;margin:4px 0}
+
+/* 감독 에이전트 초안 (요청함 임시저장) */
+.badge.draft{background:#e6def3}
+.req.draft{background:#faf8fd;border-radius:10px;padding:8px}
+.req .resp.why{background:#f1edf8}

@@ -153,7 +153,8 @@ async function updateBadges() {
       codex: (cx.data.tasks || []).filter(t => ['완료', '질문'].includes(t.status)).length,
     };
     const waiting = (data.requests || []).filter(r => r.status === '대기' || r.status === '진행중');
-    const count = room => waiting.filter(r => room === 'requests' || r.room === room).length;
+    const drafts = (data.requests || []).filter(r => r.status === '임시저장').length;   // 감독 초안은 요청함에만 표시
+    const count = room => waiting.filter(r => room === 'requests' || r.room === room).length + (room === 'requests' ? drafts : 0);
     for (const r of ROOMS) {
       const b = navLinks[r.id]?.querySelector('.badge');
       if (!b) continue;

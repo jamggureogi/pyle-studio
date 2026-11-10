@@ -78,6 +78,7 @@ function card(ctx, d, tab) {
       h('div', { class: 'row' },
         h('span', { class: 'did' }, d.id),
         h('h2', { style: { margin: 0, flex: 1 } }, d.title),
+        d.createdBy === '감독' && h('span', { class: 'badge draft' }, '🔍 감독 제안'),
         decided ? h('span', { class: 'badge ok' }, '결정됨') : answered ? h('span', { class: 'badge info' }, '제출함 · 반영 대기') : h('span', { class: 'badge warn' }, '대기')),
       d.context && h('p', { class: 'ctx', html: inline(d.context) }),
       d.link && h('a', { href: d.link, class: 'small-link' }, '관련 화면 열기 →'),
