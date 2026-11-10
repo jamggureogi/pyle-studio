@@ -139,7 +139,7 @@ async function editView(ctx, id) {
   }
   if (M.empty) return h('div', { class: 'card empty' }, '맵이 없어요. ', h('button', { class: 'btn small', onclick: () => newMap(ctx) }, '+ 새 맵'));
   const st = M.ui ||= { tool: 'terrain', terrain: M.map.terrains.indexOf('dirt_path') >= 0 ? M.map.terrains.indexOf('dirt_path') : 0, brush: 1, grid: true, zoom: 0.5, quality: 0.5, sel: null, hlevel: 1, hstyle: 'cliff', blendMode: 1 };
-  st.hlevel ??= 1; st.hstyle ??= 'cliff'; st.blendMode ??= 1;
+  st.hlevel ??= 1; st.hstyle ??= 'cliff'; st.blendMode ??= 1; st.passMode ??= 2; st.showPass ??= false;
 
   const stage = h('div', { class: 'map-stage' }, h('div', { class: 'empty' }, '지형 그리는 중… (처음엔 몇 초 걸려요)'));
   const side = h('div', { class: 'map-side' });
@@ -163,6 +163,8 @@ async function editView(ctx, id) {
   zoomSel.onchange = () => { st.zoom = Number(zoomSel.value); layout(); };
   const gridChk = h('input', { type: 'checkbox', checked: st.grid });
   gridChk.onchange = () => { st.grid = gridChk.checked; overlay(); };
+  const passChk = h('input', { type: 'checkbox', checked: st.showPass });
+  passChk.onchange = () => { st.showPass = passChk.checked; overlay(); };
 
   // canvases: terrain (from renderer) + overlay (grid, events, objects)
   const base = h('canvas', { class: 'map-base' });
@@ -190,6 +192,57 @@ async function editView(ctx, id) {
     stage.replaceChildren(wrap);
     overlay();
   }
+  // ---------- 통행 지도 (게임 field.gd와 같은 규칙) ----------
+  // 막힌 칸 = 걸을 수 없는 지형(모서리 4개 중 2개 이상) + 건물 발자리 + 절벽 벽(높은 칸 바로 아래, 비탈 아님) + 다리는 열림 + 통행 붓.
+  // 사물(나무·바위)은 밑동 둘레만 막혀서 주황 원으로 보여요.
+  function passGrid() {
+    const { cols, rows } = M.map, P = new Uint8Array(cols * rows);
+    const walk = id => (M.defs.find(d => d.id === id) || {}).walkable !== false;
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      let bad = 0;
+      for (const [cx, cy] of [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]]) if (!walk(M.map.terrains[M.map.corners[cy * (cols + 1) + cx]])) bad++;
+      if (bad >= 2) P[y * cols + x] = 1;
+    }
+    for (const b of M.map.buildings || []) for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) if (x >= 0 && y >= 0 && x < cols && y < rows) P[y * cols + x] = 1;
+    const H = M.map.heights, L = M.map.hills || [];
+    if (H) for (let y = 0; y < rows - 1; y++) for (let x = 0; x < cols; x++) if ((H[y * cols + x] || 0) > (H[(y + 1) * cols + x] || 0) && !(L[y * cols + x] > 0)) P[(y + 1) * cols + x] = 1;
+    for (const o of M.map.objects) {
+      if (!o.bridge) continue;
+      const im = objImgs.get(o.file); if (!im) continue;
+      const w = im.naturalWidth * o.scale, hh = im.naturalHeight * o.scale;
+      for (let ty = Math.floor((o.y - hh * 0.72) / TILE); ty <= Math.floor((o.y - hh * 0.2) / TILE); ty++)
+        for (let tx = Math.floor((o.x - w / 2) / TILE); tx <= Math.floor((o.x + w / 2) / TILE); tx++) if (tx >= 0 && ty >= 0 && tx < cols && ty < rows) P[ty * cols + tx] = 0;
+    }
+    const po = M.map.passOverride;
+    if (po) for (let i = 0; i < P.length; i++) { if (po[i] === 1) P[i] = 2; else if (po[i] === 2) P[i] = 3; }
+    return P;   // 0 열림, 1 막힘, 2 붓으로 엶, 3 붓으로 막음
+  }
+  function drawPass(g) {
+    const P = passGrid(), { cols, rows } = M.map;
+    const col = ['', 'rgba(255,40,30,0.38)', 'rgba(60,130,255,0.38)', 'rgba(200,0,120,0.45)'];
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) { const v = P[y * cols + x]; if (v) { g.fillStyle = col[v]; g.fillRect(x * TILE, y * TILE, TILE, TILE); } }
+    g.fillStyle = 'rgba(255,150,20,0.5)';
+    for (const o of M.map.objects) {
+      if (o.collide === false || o.ground) continue;
+      const im = objImgs.get(o.file); if (!im) continue;
+      const r = Math.min(46, Math.max(10, im.naturalWidth * o.scale * 0.16));
+      g.beginPath(); g.arc(o.x, o.y - 8, r, 0, Math.PI * 2); g.fill();
+    }
+  }
+  const paintPass = p => {
+    const { cols, rows } = M.map, cr = Math.floor(p.y / TILE), cc = Math.floor(p.x / TILE), n = st.brush - 1;
+    M.map.passOverride ||= new Array(cols * rows).fill(0);
+    let changed = false;
+    for (let r = cr - n; r <= cr + n; r++) for (let c = cc - n; c <= cc + n; c++) {
+      if (r < 0 || c < 0 || r >= rows || c >= cols) continue;
+      const i = r * cols + c;
+      if (M.map.passOverride[i] !== st.passMode) { M.map.passOverride[i] = st.passMode; changed = true; }
+    }
+    if (!changed) return;
+    if (!M.map.passOverride.some(v => v)) delete M.map.passOverride;
+    markDirty(); overlay();
+  };
+
   // 바닥 그림 + 높낮이(절벽·언덕)
   function paintBase() {
     const g = base.getContext('2d');
@@ -256,6 +309,7 @@ async function editView(ctx, id) {
         g.fillStyle = 'rgba(0,0,0,0.65)'; g.fillText(`${v}${hill ? '↗' : ''}`, c * TILE + TILE / 2, r * TILE + TILE / 2);
       }
     }
+    if (st.showPass || st.tool === 'pass') drawPass(g);
     if (st.tool === 'blend' && M.map.blend) {
       for (let r = 0; r <= M.map.rows; r++) for (let c = 0; c <= M.map.cols; c++) {
         const v = M.map.blend[r * (M.map.cols + 1) + c];
@@ -341,6 +395,7 @@ async function editView(ctx, id) {
     if (st.tool === 'terrain') { painting = true; paintAt(p); return; }
     if (st.tool === 'height') { painting = true; paintHeight(p); return; }
     if (st.tool === 'blend') { painting = true; paintBlend(p); return; }
+    if (st.tool === 'pass') { painting = true; paintPass(p); return; }
     if (st.tool === 'event') {
       const hit = hitEvent(p);
       if (hit) st.sel = hit;
@@ -362,13 +417,13 @@ async function editView(ctx, id) {
   over.addEventListener('pointermove', e => {
     const p = posOf(e);
     status.textContent = `칸 (${Math.floor(p.x / TILE)}, ${Math.floor(p.y / TILE)})${M.dirty ? ' · 저장 안 한 변경 있음' : ''}`;
-    if (painting) (st.tool === 'height' ? paintHeight : st.tool === 'blend' ? paintBlend : paintAt)(p);
+    if (painting) (st.tool === 'height' ? paintHeight : st.tool === 'blend' ? paintBlend : st.tool === 'pass' ? paintPass : paintAt)(p);
     if (dragObj) { dragObj.o.x = Math.round(p.x + dragObj.dx); dragObj.o.y = Math.round(p.y + dragObj.dy); markDirty(); overlay(); }
   });
   over.addEventListener('pointerup', () => { painting = false; dragObj = null; });
 
   function drawSide() {
-    const tools = [['terrain', '🖌 지형 붓'], ['blend', '🌫 섞기 붓'], ['height', '⛰ 높이 붓'], ['event', '★ 이벤트'], ['object', '🌲 사물'], ['select', '👆 선택']];
+    const tools = [['terrain', '🖌 지형 붓'], ['blend', '🌫 섞기 붓'], ['height', '⛰ 높이 붓'], ['pass', '🚧 통행 붓'], ['event', '★ 이벤트'], ['object', '🌲 사물'], ['select', '👆 선택']];
     const objAssets = M.assets.filter(a => ['object', 'decor'].includes(a.kind) && a.status !== '보관');
     fill(side, 
       h('div', { class: 'card' },
@@ -399,6 +454,13 @@ async function editView(ctx, id) {
           h('h4', {}, '붓 크기'),
           h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
           h('p', { class: 'muted', style: { fontSize: '12px' } }, '칸에 높이를 칠하면 높은 곳의 아래쪽 경계에 절벽 벽이 저절로 생겨요(경계는 구불구불). "언덕"으로 칠한 칸은 벽 대신 풀 비탈이 되고 캐릭터가 오르내릴 수 있어요. 절벽 쪽에 계단 자리를 내려면 "비탈만 내기"로 한두 칸 칠하세요. 칸의 숫자 = 높이, ↗ = 비탈.')),
+        st.tool === 'pass' && h('div', {},
+          h('h4', {}, '통행 붓'),
+          h('div', { class: 'palette' }, [[2, '⛔ 막기'], [1, '✅ 열기 (지나갈 수 있게)'], [0, '↺ 자동으로 되돌리기']].map(([v, l]) =>
+            h('button', { class: `pal ${st.passMode === v ? 'on' : ''}`, onclick: () => { st.passMode = v; drawSide(); } }, l))),
+          h('h4', {}, '붓 크기'),
+          h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
+          h('p', { class: 'muted', style: { fontSize: '12px' } }, '게임에서 지나갈 수 있는지를 칸마다 보여 줘요. 빨강 = 자동으로 막힌 칸(물·건물·절벽 벽), 주황 원 = 나무·바위 밑동, 분홍 = 붓으로 막은 칸, 파랑 = 붓으로 연 칸. 자동 판정이 어색한 곳만 붓으로 막거나 여세요. 위쪽 [🚧 통행]을 켜면 다른 도구를 쓸 때도 보여요.')),
         st.tool === 'event' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '맵을 누르면 그 칸에 이벤트 지점이 생겨요. 이미 있는 지점을 누르면 선택돼요. 오른쪽에서 종류와 연결할 스토리 장면을 고르세요.'),
         st.tool === 'object' && h('div', {},
           h('p', { class: 'muted', style: { fontSize: '13px' } }, '사물을 고르고 맵을 누르면 그 자리에 놓여요(누른 곳이 사물의 발밑). 놓인 사물은 끌어서 옮겨요.'),
@@ -472,7 +534,7 @@ async function editView(ctx, id) {
   drawSide(); drawProps();
   setTimeout(draw, 20);
   return h('div', {},
-    h('div', { class: 'savebar' }, mapSel, zoomSel, q, h('label', { class: 'row', style: { gap: '4px' } }, gridChk, '격자'), status, h('span', { class: 'spacer' }), saveBtn),
+    h('div', { class: 'savebar' }, mapSel, zoomSel, q, h('label', { class: 'row', style: { gap: '4px' } }, gridChk, '격자'), h('label', { class: 'row', style: { gap: '4px' }, title: '게임에서 지나갈 수 없는 칸을 빨갛게 보여요' }, passChk, '🚧 통행'), status, h('span', { class: 'spacer' }), saveBtn),
     h('div', { class: 'map-layout' }, side, stage, props),
     mapFeedback(ctx, M.id, M.map.name));
 }
@@ -557,7 +619,8 @@ async function resizeMap(ctx) {
   old.heights = regrid(old.heights, old.cols, old.rows, nc, nr);
   old.hills = regrid(old.hills, old.cols, old.rows, nc, nr);
   old.blend = regrid(old.blend, old.cols + 1, old.rows + 1, nc + 1, nr + 1);
-  for (const k of ['heights', 'hills', 'blend']) if (old[k] === undefined) delete old[k];
+  old.passOverride = regrid(old.passOverride, old.cols, old.rows, nc, nr);
+  for (const k of ['heights', 'hills', 'blend', 'passOverride']) if (old[k] === undefined) delete old[k];
   Object.assign(old, { cols: nc, rows: nr, corners });
   old.events = old.events.filter(e => e.x < nc && e.y < nr);
   M.dirty = true; M.renderer = null;
