@@ -25,7 +25,7 @@ export const ROOMS = [
   { id: 'codex', name: '코덱스', ico: '🤝', mod: codex },
   { id: 'requests', name: '요청함', ico: '📮', mod: requests },
 ];
-export const roomName = id => ROOMS.find(r => r.id === id)?.name || id;
+export const roomName = id => id === 'general' ? '일반' : ROOMS.find(r => r.id === id)?.name || id;
 
 const DEFAULT_REPO = 'jamggureogi/pyle_claude';
 const app = document.getElementById('app');

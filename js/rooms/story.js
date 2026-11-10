@@ -15,7 +15,7 @@ const OPS = {
   fade_out: '화면 암전', fade_in: '암전 해제', camera_pan: '카메라 이동', start_battle: '전투 시작', add_party: '동료 합류', play_se: '효과음', play_bgm: '배경음악', wait: '잠시 대기',
   title_motion: '타이틀 연출', flash: '화면 번쩍임', shake: '화면 흔들림',
 };
-const REPEAT = { none: '다시 말 걸면 반복 없음', tail: '끝부분 반복', separate: '별도 반복 대사' };
+const REPEAT = { none: '전체 대화를 다시 (기본)', tail: '끝부분만 반복 (긴 대화용)', separate: '다시 말 걸면 따로 쓴 대사' };
 
 // Kept between route changes so unsaved edits survive moving between scenes.
 let S = null;
@@ -110,6 +110,7 @@ function flowTree(ctx, sel) {
       h('span', { class: 'grip' }, '⠿'),
       h('span', { class: `dot ${statusClass[s.status] || ''}`, title: s.status }),
       h('span', { class: 'name' }, s.title || id),
+      s.claudeNote && h('span', { title: 'Claude가 새로 쓰거나 고친 대사 — 확인해 주세요' }, ' 🤖'),
       S.dirty.has(id) && h('span', { class: 'muted' }, ' •'));
     return a;
   };
@@ -157,7 +158,13 @@ function flowTree(ctx, sel) {
   };
   q.addEventListener('input', draw);
   draw();
+  const byClaude = Object.values(S.story.scenes).filter(x => x.claudeNote);
+  const notice = byClaude.length && h('details', { class: 'claude-notice' },
+    h('summary', {}, h('b', {}, `🤖 Claude가 새로 쓴 대사 ${byClaude.length}개`), ' — 눌러서 보기'),
+    h('p', { class: 'muted', style: { margin: '4px 0' } }, '읽어 보고 장면마다 [확인했어요]를 눌러 주세요. 목록에도 🤖가 붙어 있어요.'),
+    h('div', { class: 'links' }, byClaude.map(x => h('a', { href: `#/story/edit/${x.id}` }, x.title || x.id))));
   return h('div', { class: 'card tree story-tree' },
+    notice,
     h('div', { class: 'row', style: { marginBottom: '8px', fontSize: '12px' } }, STATUSES.map(s => h('span', { class: `badge ${statusClass[s]}` }, `${s} ${counts[s] || 0}`))),
     q, list,
     h('div', { class: 'row', style: { marginTop: '10px' } },
@@ -271,7 +278,13 @@ function sceneEditor(ctx, id) {
     rerender(ctx, S.story.flow[0]?.id);
   };
 
+  const ack = () => { delete s.claudeNote; change(); rerender(ctx, id); toast('확인 표시를 했어요. [저장]을 누르면 반영돼요.'); };
+  const claudeBox = s.claudeNote && h('div', { class: 'card claude-note' },
+    h('div', { class: 'row' }, h('b', {}, '🤖 Claude가 새로 쓴 대사예요'), h('span', { class: 'spacer' }), h('button', { class: 'btn small primary', onclick: ack }, '확인했어요')),
+    h('p', { style: { margin: '6px 0 0', fontSize: '14px' } }, s.claudeNote.text || ''),
+    h('p', { class: 'muted', style: { margin: '4px 0 0', fontSize: '12px' } }, '마음에 안 들면 바로 고치시거나 지워도 돼요.'));
   return h('div', { class: 'scene-ed' },
+    claudeBox,
     h('div', { class: 'card' },
       h('div', { class: 'row' },
         h('span', { class: `badge ${statusClass[s.status] || ''}` }, s.status),
@@ -496,14 +509,19 @@ function cgPicker(ctx, st, change, redraw) {
   keySel.onchange = async () => {
     if (keySel.value === '__new') {
       const title = h('input', { placeholder: '예) 비 오는 밤의 다리' });
-      const key = h('input', { placeholder: '영어 id (예: rainy_bridge)' });
-      const ok = await modal('새 일러스트 칸', h('div', {}, h('label', { class: 'field' }, h('span', {}, '이름'), title), h('label', { class: 'field' }, h('span', {}, 'id (Codex가 그림을 등록할 때 이 id를 씀)'), key)),
-        [{ label: '취소', value: false }, { label: '만들기', value: true, primary: true }]);
-      const k = (key.value.trim() || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_');
-      if (!ok || !k) { keySel.value = st.args.key || ''; return; }
-      ills[k] = { title: title.value.trim() || k, file: null, status: '제작필요', candidates: [] };
+      const want = h('textarea', { rows: 5, placeholder: '어떤 그림인지 자유롭게 적어 주세요. 예) 비 오는 밤, 돌다리 위에서 파일이 등을 돌린 채 서 있고, 멀리 마을 불빛이 흐리게 보인다. 쓸쓸한 분위기.' });
+      const ok = await modal('새 일러스트 요청', h('div', {},
+        h('label', { class: 'field' }, h('span', {}, '이름'), title),
+        h('label', { class: 'field' }, h('span', {}, '원하는 그림 내용'), want),
+        h('p', { class: 'muted', style: { fontSize: '12px', margin: 0 } }, '저장하면 Claude가 확인해서 Codex에게 그림을 요청해요. 그림이 오면 이 칸에 후보로 나타나요.')),
+        [{ label: '취소', value: false }, { label: '요청하기', value: true, primary: true }]);
+      if (!ok || !title.value.trim()) { if (ok) toast('이름을 적어 주세요.', true); keySel.value = st.args.key || ''; return; }
+      const k = newIllustrationKey(ills);
+      ills[k] = { title: title.value.trim(), file: null, status: '제작필요', candidates: [] };
+      if (want.value.trim()) ills[k].request = { text: want.value.trim(), status: '대기', at: new Date().toISOString() };
       st.args.key = k;
-      await saveIllustrations(ctx, `일러스트 칸 추가: ${k}`).catch(e => toast(e.message, true));
+      await saveIllustrations(ctx, `일러스트 칸 추가: ${ills[k].title}`).catch(e => toast(e.message, true));
+      toast(want.value.trim() ? '요청을 남겼어요. Claude가 확인해서 Codex에게 맡겨요.' : '칸을 만들었어요. 아래에 원하는 그림 내용을 적어 주세요.');
     } else st.args.key = keySel.value;
     change(); redraw();
   };
@@ -542,7 +560,41 @@ function cgPicker(ctx, st, change, redraw) {
     }
     strip.append(h('span', { class: 'muted cg-note' }, ill.file ? '✓ 선택됨' : cands.length ? '하나를 골라 주세요' : `id "${key}"로 등록된 후보가 아직 없어요`));
   }
-  return h('div', { class: 'cg-picker' }, h('div', { class: 'row' }, keySel, h('span', { class: 'muted', style: { fontSize: '12px' } }, '나타나는 시간'), dur, h('span', { class: 'muted', style: { fontSize: '12px' } }, '초')), strip);
+  const hint = !key && h('p', { class: 'muted cg-hint' }, '아직 일러스트를 고르지 않았어요. 목록에서 고르거나, 마음에 드는 게 없으면 "+ 새 일러스트 칸 만들기"로 원하는 그림을 요청하세요.');
+  return h('div', { class: 'cg-picker' }, h('div', { class: 'row' }, keySel, h('span', { class: 'muted', style: { fontSize: '12px' } }, '나타나는 시간'), dur, h('span', { class: 'muted', style: { fontSize: '12px' } }, '초')), strip, hint, key && ills[key] && requestBox(ctx, key, redraw));
+}
+
+// 일러스트 칸 id: 사용자는 신경 쓰지 않아도 되게 자동으로 짓는다.
+function newIllustrationKey(ills) {
+  let n = Object.keys(ills).length + 1, k;
+  do { k = `cg_${String(n++).padStart(3, '0')}`; } while (ills[k]);
+  return k;
+}
+
+const REQ_STATE = {
+  '대기': '📨 Claude가 확인해서 Codex에게 그림을 맡길 예정이에요.',
+  'Claude 초안': '✍️ Claude가 장면을 보고 적은 초안이에요. 원하는 대로 고친 뒤 [요청하기]를 눌러 주세요.',
+  '요청됨': '🤝 Codex에게 맡겼어요. 그림이 오면 위 칸에 후보로 나타나요.',
+};
+
+// 원하는 그림 내용 적기 → Claude가 data/codex_tasks.json에 Codex 작업으로 옮긴다.
+function requestBox(ctx, key, redraw) {
+  const ill = S.story.illustrations[key];
+  const r = ill.request || {};
+  const ta = h('textarea', { rows: 3, placeholder: '원하는 그림 내용 (장면, 인물, 구도, 분위기, 시간대 등)' });
+  ta.value = r.text || '';
+  const save = async () => {
+    if (!ta.value.trim()) return toast('원하는 그림 내용을 적어 주세요.', true);
+    ill.request = { text: ta.value.trim(), status: '대기', at: new Date().toISOString() };
+    try { await saveIllustrations(ctx, `일러스트 요청: ${ill.title}`); toast('요청을 남겼어요. Claude가 확인해서 Codex에게 맡겨요.'); } catch (e) { toast(e.message, true); }
+    redraw();
+  };
+  const open = !ill.file || ['대기', 'Claude 초안'].includes(r.status);
+  return h('details', { class: 'cg-request', open },
+    h('summary', {}, ill.file ? '다른 그림으로 다시 요청하기' : '원하는 그림 요청하기', r.status && h('span', { class: 'badge info', style: { marginLeft: '6px' } }, r.codexTask ? `${r.status} · ${r.codexTask}` : r.status)),
+    r.status && h('p', { class: 'muted', style: { fontSize: '12px', margin: '6px 0' } }, REQ_STATE[r.status] || ''),
+    ta,
+    h('div', { class: 'row' }, h('button', { class: 'btn small primary', onclick: save }, r.status === '요청됨' ? '내용 고쳐서 다시 요청' : '요청하기')));
 }
 
 async function linkCandidate(ctx, key, redraw) {

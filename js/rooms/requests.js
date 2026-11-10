@@ -31,7 +31,7 @@ export function requestPanel(ctx, room) {
   }
 
   function form() {
-    const roomSel = room ? null : h('select', {}, ROOMS.filter(r => !['home', 'requests'].includes(r.id)).map(r => h('option', { value: r.id }, r.name)));
+    const roomSel = room ? null : h('select', {}, h('option', { value: 'general' }, '일반 (게임 전반에 걸친 요청)'), ROOMS.filter(r => !['home', 'requests'].includes(r.id)).map(r => h('option', { value: r.id }, r.name)));
     const title = h('input', { placeholder: '예) 주인공 웃는 표정 초상화 새로 만들어줘' });
     const body = h('textarea', { placeholder: '자세한 내용 (선택)' });
     const add = async () => {

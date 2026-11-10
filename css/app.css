@@ -287,6 +287,10 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .cg-picker{flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:6px}
 .cg-picker select{max-width:100%}
 .cg-picker .dur{width:64px}
+.cg-hint{font-size:12px;margin:0}
+.cg-request{border:1px dashed var(--line,#ccc);border-radius:8px;padding:6px 10px;font-size:13px}
+.cg-request summary{cursor:pointer;font-weight:600}
+.cg-request textarea{width:100%;margin:6px 0}
 .cg-strip{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .cg-slot{position:relative;width:120px;height:68px;border:2px solid var(--line);border-radius:8px;background:#eee9de;padding:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)}
 .cg-slot img{width:100%;height:100%;object-fit:cover}
@@ -370,3 +374,10 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .pv-box.framed{background:transparent;border:none;border-radius:0}
 .pv-frame{position:absolute;inset:0;border-style:solid;box-sizing:border-box;pointer-events:none;z-index:-1}
 .pv-box.framed .pv-name,.pv-box.framed .pv-text{position:relative}
+
+/* Claude가 새로 쓴 대사 알림 (스토리룸) */
+.claude-notice{background:#fff7e0;border:1px solid #e9cf86;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:10px}
+.claude-notice summary{cursor:pointer}
+.claude-notice .links{display:flex;flex-direction:column;gap:2px;margin-top:4px;max-height:220px;overflow:auto}
+.claude-notice .links a{padding:2px 6px !important}
+.claude-note{border-left:4px solid #e3b341;background:#fffaf0}
