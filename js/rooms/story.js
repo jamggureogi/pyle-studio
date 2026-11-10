@@ -574,6 +574,7 @@ function newIllustrationKey(ills) {
 const REQ_STATE = {
   '대기': '📨 Claude가 확인해서 Codex에게 그림을 맡길 예정이에요.',
   'Claude 초안': '✍️ Claude가 장면을 보고 적은 초안이에요. 원하는 대로 고친 뒤 [요청하기]를 눌러 주세요.',
+  '감독 초안': '🔍 감독이 빈 칸을 찾아 장면을 보고 적은 초안이에요. 원하는 대로 고친 뒤 [요청하기]를 눌러 주세요.',
   '요청됨': '🤝 Codex에게 맡겼어요. 그림이 오면 위 칸에 후보로 나타나요.',
 };
 
@@ -589,7 +590,7 @@ function requestBox(ctx, key, redraw) {
     try { await saveIllustrations(ctx, `일러스트 요청: ${ill.title}`); toast('요청을 남겼어요. Claude가 확인해서 Codex에게 맡겨요.'); } catch (e) { toast(e.message, true); }
     redraw();
   };
-  const open = !ill.file || ['대기', 'Claude 초안'].includes(r.status);
+  const open = !ill.file || ['대기', 'Claude 초안', '감독 초안'].includes(r.status);
   return h('details', { class: 'cg-request', open },
     h('summary', {}, ill.file ? '다른 그림으로 다시 요청하기' : '원하는 그림 요청하기', r.status && h('span', { class: 'badge info', style: { marginLeft: '6px' } }, r.codexTask ? `${r.status} · ${r.codexTask}` : r.status)),
     r.status && h('p', { class: 'muted', style: { fontSize: '12px', margin: '6px 0' } }, REQ_STATE[r.status] || ''),
