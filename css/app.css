@@ -424,3 +424,15 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .motion-row{display:flex;flex-wrap:wrap;gap:10px}
 .motion-item{display:flex;flex-direction:column;align-items:center;background:#e8e4da;border-radius:8px;padding:6px}
 .motion-item .cap{font-size:12px;color:#555}
+/* 작가 제안 룸 */
+.writer-card .wp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:10px 0;font-size:14px}
+.wp-elements{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;background:#f6f3ea;border-radius:8px;padding:8px 12px;font-size:14px}
+.wp-elements ul{margin:4px 0 0 18px;padding:0}
+.wp-scene{border:1px solid #e3ded2;border-radius:8px;padding:8px 12px;margin:8px 0}
+.wp-scene summary{cursor:pointer}
+.wp-steps{display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:14px}
+.wp-line{padding:2px 0}
+.wp-dir{font-style:italic;color:#6b6252;background:#f6f3ea;padding:4px 8px;border-radius:6px}
+.wp-cmd{font-size:12px;color:#5a6b80}
+.wp-actions{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+.wp-feedback{margin:8px 0;padding:8px 10px;background:#f3f6f1;border-radius:8px;font-size:14px}

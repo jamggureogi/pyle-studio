@@ -5,7 +5,8 @@ import { makeDraggable, moveInArray } from '../drag.js';
 import { loadRegistry, updateRegistry } from '../assets.js';
 import { portraitLayer, loadDialogueLayout, layoutStage } from '../portrait.js';
 
-const FILE = 'data/story/prologue.json';
+// 장(파일) 선택: 프롤로그 + 작가 제안에서 편입된 장들 (data/story/*.json)
+let FILE = localStorage.getItem('pyle.storyFile') || 'data/story/prologue.json';
 const CHARS = 'data/characters.json';
 const STATUSES = ['확정', '초안', '수정필요', '작성필요'];
 const statusClass = { 확정: 'ok', 초안: 'info', 수정필요: 'warn', 작성필요: 'danger' };
@@ -22,7 +23,7 @@ let S = null;
 
 async function load(ctx) {
   const [st, ch, reg] = await Promise.all([ctx.store.getJSON(FILE), ctx.store.getJSON(CHARS, { characters: [] }), loadRegistry(ctx.store).catch(() => []), loadDialogueLayout(ctx.store)]);
-  if (!st.data) throw new Error('스토리 데이터(data/story/prologue.json)가 없어요.');
+  if (!st.data) { if (FILE !== 'data/story/prologue.json') { FILE = 'data/story/prologue.json'; localStorage.removeItem('pyle.storyFile'); return load(ctx); } throw new Error('스토리 데이터(data/story/prologue.json)가 없어요.'); }
   S = { story: st.data, sha: st.sha, chars: ch.data, assets: reg, dirty: new Set(), flowDirty: false, checked: new Set(), openGroups: new Set(), store: ctx.store };
 }
 
@@ -86,8 +87,19 @@ export async function render(ctx, rest) {
       h('a', { href: '#/story/edit', class: tab === 'edit' ? 'on' : '' }, '장면 편집'),
       h('a', { href: '#/story/requests', class: tab === 'requests' ? 'on' : '' }, '요청함')));
   if (tab === 'requests') { page.append(requestPanel(ctx, 'story')); return page; }
-  if (!S || S.store !== ctx.store) await load(ctx);
+  if (!S || S.store !== ctx.store || S.file !== FILE) await load(ctx);
+  S.file = FILE;
   const sel = rest[1] && S.story.scenes[rest[1]] ? rest[1] : S.story.flow[0]?.id;
+  const files = (await ctx.store.list('data/story').catch(() => [])).filter(f => f.name.endsWith('.json'));
+  if (files.length > 1) {
+    const fs = h('select', {}, files.map(f => h('option', { value: f.path, selected: f.path === FILE }, f.name === 'prologue.json' ? '프롤로그' : f.name.replace('.json', ''))));
+    fs.onchange = async () => {
+      if (isDirty() && !await confirmBox('저장 안 한 변경이 있어요. 버리고 다른 장으로 갈까요?', '이동')) { fs.value = FILE; return; }
+      FILE = fs.value; localStorage.setItem('pyle.storyFile', FILE); S = null; ctx.go('#/story/edit');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    };
+    page.append(h('div', { class: 'row', style: { marginBottom: '8px' } }, h('b', {}, '장'), fs));
+  }
   saveBar = h('div', { class: 'savebar' },
     h('span', { class: 'msg' }),
     h('span', { class: 'spacer' }),
