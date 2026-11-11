@@ -140,7 +140,7 @@ async function editView(ctx, id) {
   }
   if (M.empty) return h('div', { class: 'card empty' }, '맵이 없어요. ', h('button', { class: 'btn small', onclick: () => newMap(ctx) }, '+ 새 맵'));
   const st = M.ui ||= { tool: 'terrain', terrain: M.map.terrains.indexOf('dirt_path') >= 0 ? M.map.terrains.indexOf('dirt_path') : 0, brush: 1, grid: true, zoom: 0.5, quality: 0.5, sel: null, hlevel: 1, hstyle: 'cliff', blendMode: 1 };
-  st.hlevel ??= 1; st.hstyle ??= 'cliff'; st.blendMode ??= 1; st.passMode ??= 2; st.showPass ??= false;
+  st.hlevel ??= 1; st.hstyle ??= 'cliff'; st.blendMode ??= 1; st.passMode ??= 2; st.showPass ??= false; st.passCell ??= TILE; st.passTarget ??= 'map';
 
   const stage = h('div', { class: 'map-stage' }, h('div', { class: 'empty' }, '지형 그리는 중… (처음엔 몇 초 걸려요)'));
   const side = h('div', { class: 'map-side' });
@@ -267,8 +267,91 @@ async function editView(ctx, id) {
         g.beginPath(); g.arc(o.x, o.y - 8, Math.min(46, Math.max(10, bx.w * 0.16)), 0, Math.PI * 2); g.fill();
       }
     }
+    // 칸보다 작은 통행 붓 (passFine, 16px 조각): 분홍 = 막기, 파랑 = 열기
+    const pf = M.map.passFine;
+    if (pf && pf.cells) for (const [k, v] of Object.entries(pf.cells)) {
+      const [cx, cy] = k.split(',').map(Number), cs = pf.cell || 16;
+      g.fillStyle = v === 2 ? 'rgba(200,0,120,0.5)' : 'rgba(60,130,255,0.5)'; g.fillRect(cx * cs, cy * cs, cs, cs);
+    }
+    // 사물에 칠하기: 고른 사물의 그림 테두리와 16px 눈금
+    if (st.tool === 'pass' && st.passTarget === 'object' && st.sel && M.map.objects.includes(st.sel)) {
+      const bx = objBox(st.sel);
+      if (bx) {
+        g.save(); g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1;
+        for (let x = bx.x; x <= bx.x + bx.w; x += FINE) { g.beginPath(); g.moveTo(x, bx.y); g.lineTo(x, bx.y + bx.h); g.stroke(); }
+        for (let y = bx.y; y <= bx.y + bx.h; y += FINE) { g.beginPath(); g.moveTo(bx.x, y); g.lineTo(bx.x + bx.w, y); g.stroke(); }
+        g.setLineDash([10, 6]); g.strokeStyle = '#ffd34d'; g.lineWidth = 4; g.strokeRect(bx.x, bx.y, bx.w, bx.h); g.restore();
+      }
+    }
   }
+  // ---------- 칸보다 작은 통행 붓 / 사물에 칠하는 통행 붓 (req_mwc8hc7v9a8q) ----------
+  const FINE = 16;
+  function paintPassFine(p) {
+    const cs = st.passCell, n = st.brush - 1, k = cs / FINE;
+    const c0 = Math.floor(p.x / cs) - n, r0 = Math.floor(p.y / cs) - n;
+    M.map.passFine ||= { cell: FINE, cells: {} };
+    const cells = M.map.passFine.cells; let changed = false;
+    for (let r = r0; r <= r0 + 2 * n; r++) for (let c = c0; c <= c0 + 2 * n; c++)
+      for (let yy = 0; yy < k; yy++) for (let xx = 0; xx < k; xx++) {
+        const x = c * k + xx, y = r * k + yy; if (x < 0 || y < 0 || x * FINE >= M.map.cols * TILE || y * FINE >= M.map.rows * TILE) continue;
+        const key = `${x},${y}`;
+        if (st.passMode === 0) { if (key in cells) { delete cells[key]; changed = true; } }
+        else if (cells[key] !== st.passMode) { cells[key] = st.passMode; changed = true; }
+      }
+    if (!changed) return;
+    if (!Object.keys(cells).length) delete M.map.passFine;
+    markDirty(); overlay();
+  }
+  // 사물 막힘을 16px 조각으로: o.blockCells(그림 안 조각 번호, 뒤집기 전 기준) → o.block(그림 안 비율 네모들, 게임이 읽음)
+  function objCellsInit(o, bx) {
+    if (o.blockCells) return;
+    const cw = Math.ceil(bx.w / FINE), ch = Math.ceil(bx.h / FINE), set = new Set();
+    for (let j = 0; j < ch; j++) for (let i = 0; i < cw; i++) {
+      const fx = (i + 0.5) * FINE / bx.w, fy = (j + 0.5) * FINE / bx.h;
+      const wx = bx.x + (o.flip ? 1 - fx : fx) * bx.w, wy = bx.y + fy * bx.h;
+      const inBlock = bx.block ? bx.block.some(r => wx >= r.x && wx < r.x + r.w && wy >= r.y && wy < r.y + r.h)
+        : (!bx.walk && bx.collide !== false && !bx.ground && Math.hypot(wx - o.x, wy - (o.y - 8)) < Math.min(46, Math.max(10, bx.w * 0.16)));
+      if (inBlock) set.add(`${i},${j}`);
+    }
+    o.blockCells = [...set];
+  }
+  function objCellsApply(o, bx) {
+    const rows = {};
+    for (const k of o.blockCells) { const [i, j] = k.split(',').map(Number); (rows[j] ||= []).push(i); }
+    const rects = [];
+    for (const [j, is] of Object.entries(rows)) {
+      is.sort((a, b) => a - b);
+      let a = is[0], b = is[0];
+      const push = () => rects.push([+(a * FINE / bx.w).toFixed(4), +(j * FINE / bx.h).toFixed(4), +Math.min(1, (b + 1) * FINE / bx.w).toFixed(4), +Math.min(1, (+j + 1) * FINE / bx.h).toFixed(4)]);
+      for (const i of is.slice(1)) { if (i === b + 1) b = i; else { push(); a = b = i; } }
+      push();
+    }
+    o.block = rects;
+    o.collide = rects.length > 0;
+  }
+  function paintObjPass(p) {
+    const o = st.sel, bx = o && objBox(o);
+    if (!bx) return;
+    objCellsInit(o, bx);
+    const set = new Set(o.blockCells), n = st.brush - 1, k = Math.max(1, st.passCell / FINE);
+    let fx = (p.x - bx.x) / bx.w; if (o.flip) fx = 1 - fx;
+    const ci = Math.floor(fx * bx.w / FINE / k) * k, cj = Math.floor((p.y - bx.y) / FINE / k) * k;
+    let changed = false;
+    for (let j = cj - n * k; j < cj + (n + 1) * k; j++) for (let i = ci - n * k; i < ci + (n + 1) * k; i++) {
+      if (i < 0 || j < 0 || i * FINE >= bx.w || j * FINE >= bx.h) continue;
+      const key = `${i},${j}`;
+      if (st.passMode === 2) { if (!set.has(key)) { set.add(key); changed = true; } }
+      else if (set.delete(key)) changed = true;
+    }
+    if (!changed) return;
+    o.blockCells = [...set]; objCellsApply(o, bx);
+    markDirty(); overlay();
+  }
+  const inBox = (o, p) => { const bx = o && objBox(o); return bx && p.x >= bx.x && p.x <= bx.x + bx.w && p.y >= bx.y && p.y <= bx.y + bx.h; };
+  const hitObjBox = p => [...M.map.objects].reverse().find(o => inBox(o, p) && !propOf(o).ground) || [...M.map.objects].reverse().find(o => inBox(o, p));
   const paintPass = p => {
+    if (st.passTarget === 'object') return paintObjPass(p);
+    if (st.passCell < TILE) return paintPassFine(p);
     const { cols, rows } = M.map, cr = Math.floor(p.y / TILE), cc = Math.floor(p.x / TILE), n = st.brush - 1;
     M.map.passOverride ||= new Array(cols * rows).fill(0);
     let changed = false;
@@ -434,7 +517,14 @@ async function editView(ctx, id) {
     if (st.tool === 'terrain') { painting = true; paintAt(p); return; }
     if (st.tool === 'height') { painting = true; paintHeight(p); return; }
     if (st.tool === 'blend') { painting = true; paintBlend(p); return; }
-    if (st.tool === 'pass') { painting = true; paintPass(p); return; }
+    if (st.tool === 'pass') {
+      if (st.passTarget === 'object' && !inBox(st.sel, p)) {     // 사물 고르기 (고른 사물은 노란 점선 테두리)
+        st.sel = hitObjBox(p) || null; overlay(); drawProps(); drawSide();
+        if (!st.sel) toast('통행을 칠할 사물을 눌러 고르세요.', true);
+        return;
+      }
+      painting = true; paintPass(p); return;
+    }
     if (st.tool === 'event') {
       const hit = hitEvent(p);
       if (hit) st.sel = hit;
@@ -476,7 +566,11 @@ async function editView(ctx, id) {
           })),
           h('h4', {}, '붓 크기'),
           h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
-          h('p', { class: 'muted', style: { fontSize: '12px' } }, '칸의 모서리를 칠해요. 이웃 모서리와 다른 지형이면 그 사이가 자연스럽게 섞여요.')),
+          h('p', { class: 'muted', style: { fontSize: '12px' } }, '칸의 모서리를 칠해요. 이웃 모서리와 다른 지형이면 그 사이가 자연스럽게 섞여요.'),
+          h('h4', {}, '높낮이 지형 (절벽·언덕)'),
+          h('div', { class: 'palette' }, [['cliff', 1, '🪨 절벽 (한 단 높게, 못 지나감)'], ['hill', 1, '⛰ 언덕 (비탈로 오르내림)'], ['cliff', 0, '⬇ 평지로 되돌리기']].map(([hs, lv, l]) =>
+            h('button', { class: 'pal', onclick: () => { st.tool = 'height'; st.hstyle = hs; st.hlevel = lv; drawSide(); overlay(); } }, l))),
+          h('p', { class: 'muted', style: { fontSize: '12px' } }, '누르면 높이 붓으로 바뀌어요. 칠한 칸이 한 단 올라가고, 아래쪽 경계에 절벽 벽이 저절로 생겨요. 두 단 이상은 높이 붓에서 숫자를 골라요.')),
         st.tool === 'blend' && h('div', {},
           h('h4', {}, '경계 섞는 방법'),
           h('div', { class: 'palette' }, [[1, '🌫 부드럽게 (넓게 번짐)'], [2, '🖌 거칠게 (마른 붓 자국)'], [0, '↺ 기본으로 되돌리기']].map(([v, l]) =>
@@ -495,11 +589,20 @@ async function editView(ctx, id) {
           h('p', { class: 'muted', style: { fontSize: '12px' } }, '칸에 높이를 칠하면 높은 곳의 아래쪽 경계에 절벽 벽이 저절로 생겨요(경계는 구불구불). "언덕"으로 칠한 칸은 벽 대신 풀 비탈이 되고 캐릭터가 오르내릴 수 있어요. 절벽 쪽에 계단 자리를 내려면 "비탈만 내기"로 한두 칸 칠하세요. 칸의 숫자 = 높이, ↗ = 비탈.')),
         st.tool === 'pass' && h('div', {},
           h('h4', {}, '통행 붓'),
-          h('div', { class: 'palette' }, [[2, '⛔ 막기'], [1, '✅ 열기 (지나갈 수 있게)'], [0, '↺ 자동으로 되돌리기']].map(([v, l]) =>
+          h('div', { class: 'tool-row' }, [['map', '🗺 맵 바닥에'], ['object', '🎯 사물에']].map(([v, l]) =>
+            h('button', { class: `btn small ${st.passTarget === v ? 'primary' : ''}`, onclick: () => { st.passTarget = v; drawSide(); overlay(); } }, l))),
+          h('div', { class: 'palette' }, [[2, '⛔ 막기'], [1, st.passTarget === 'object' ? '✅ 열기 (막힘 지우기)' : '✅ 열기 (지나갈 수 있게)'], [0, '↺ 자동으로 되돌리기']].map(([v, l]) =>
             h('button', { class: `pal ${st.passMode === v ? 'on' : ''}`, onclick: () => { st.passMode = v; drawSide(); } }, l))),
+          h('h4', {}, '붓 단위'),
+          h('div', { class: 'tool-row' }, [[TILE, '1칸'], [32, '½칸'], [16, '¼칸']].map(([v, l]) =>
+            h('button', { class: `btn small ${st.passCell === v ? 'primary' : ''}`, onclick: () => { st.passCell = v; drawSide(); } }, l))),
+          st.passTarget === 'object' && h('p', { class: 'muted', style: { fontSize: '12px' } }, st.sel && M.map.objects.includes(st.sel)
+            ? `고른 사물: ${(st.sel.file || '').split('/').pop()} — 노란 점선 안을 칠하면 그 사물에만 막힘이 붙어요(사물을 옮겨도 같이 움직여요). 다른 사물을 고르려면 점선 밖의 사물을 누르세요.`
+            : '먼저 맵에서 사물을 눌러 고르세요. 고른 사물은 노란 점선 테두리로 보여요.'),
+          st.passTarget === 'object' && st.sel && st.sel.blockCells && h('button', { class: 'btn small', onclick: () => { delete st.sel.blockCells; delete st.sel.block; delete st.sel.collide; markDirty(); overlay(); drawSide(); } }, '↺ 이 사물의 막힘을 기본으로'),
           h('h4', {}, '붓 크기'),
           h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
-          h('p', { class: 'muted', style: { fontSize: '12px' } }, '게임에서 지나갈 수 있는지를 칸마다 보여 줘요. 빨강 = 자동으로 막힌 곳(물·건물·절벽 벽·난간·넓은 사물), 초록 = 다리·계단의 걷는 자리, 주황 원 = 나무·바위 밑동, 분홍 = 붓으로 막은 칸, 파랑 = 붓으로 연 칸. 자동 판정이 어색한 곳만 붓으로 막거나 여세요. 위쪽 [🚧 통행]을 켜면 다른 도구를 쓸 때도 보여요.')),
+          h('p', { class: 'muted', style: { fontSize: '12px' } }, '½칸·¼칸 붓은 칸보다 작게 막거나 열어요 (작은 분홍·파랑 네모). 게임에서 지나갈 수 있는지를 칸마다 보여 줘요. 빨강 = 자동으로 막힌 곳(물·건물·절벽 벽·난간·넓은 사물), 초록 = 다리·계단의 걷는 자리, 주황 원 = 나무·바위 밑동, 분홍 = 붓으로 막은 칸, 파랑 = 붓으로 연 칸. 자동 판정이 어색한 곳만 붓으로 막거나 여세요. 위쪽 [🚧 통행]을 켜면 다른 도구를 쓸 때도 보여요.')),
         st.tool === 'event' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '맵을 누르면 그 칸에 이벤트 지점이 생겨요. 이미 있는 지점을 누르면 선택돼요. 오른쪽에서 종류와 연결할 스토리 장면을 고르세요.'),
         st.tool === 'object' && h('div', {},
           h('p', { class: 'muted', style: { fontSize: '13px' } }, '사물을 고르고 맵을 누르면 그 자리에 놓여요(누른 곳이 사물의 발밑). 놓인 사물은 끌어서 옮겨요.'),
