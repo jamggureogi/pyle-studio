@@ -414,3 +414,13 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .badge.draft{background:#e6def3}
 .req.draft{background:#faf8fd;border-radius:10px;padding:8px}
 .req .resp.why{background:#f1edf8}
+/* 동작 미리보기 (캐릭터룸) */
+.motion-card .motion-wrap{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin-top:8px}
+.motion-block{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.compass{display:grid;grid-template-columns:repeat(3,auto);gap:4px;background:#e8e4da;border-radius:8px;padding:6px}
+.compass-cell{display:flex;flex-direction:column;align-items:center;background:#7a9a5a;border-radius:6px;padding:2px}
+.compass-mid{display:flex;align-items:center;justify-content:center;font-size:12px;color:#555}
+.motion-canvas{image-rendering:auto;display:block}
+.motion-row{display:flex;flex-wrap:wrap;gap:10px}
+.motion-item{display:flex;flex-direction:column;align-items:center;background:#e8e4da;border-radius:8px;padding:6px}
+.motion-item .cap{font-size:12px;color:#555}

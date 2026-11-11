@@ -2,6 +2,7 @@
 import { h, toast, modal, confirmBox, closeModal } from '../ui.js';
 import { portraitLayer, frameFor, loadDialogueLayout, layoutStage } from '../portrait.js';
 import { requestPanel } from './requests.js';
+import { motionCard, motionOverview, SPRITES } from '../motion.js';
 import {
   KINDS, STATUSES, statusClass, CHARS, loadRegistry, updateRegistry, uploadAssets, uploadSources, findDuplicates, thumb, spritePlayer, viewImage,
 } from '../assets.js';
@@ -29,30 +30,32 @@ async function approveAll(ctx, list) {
 }
 
 export async function render(ctx, rest) {
-  const tab = ['people', 'library', 'upload', 'requests'].includes(rest[0]) ? rest[0] : 'people';
+  const tab = ['people', 'motion', 'library', 'upload', 'requests'].includes(rest[0]) ? rest[0] : 'people';
   const page = h('div', { class: 'page wide' },
     h('h1', {}, '🧑 캐릭터룸'),
     h('p', { class: 'sub' }, '인물별 초상화와 스프라이트, 모든 그림의 후보·승인·사용 상태를 관리해요. Codex나 Claude가 만든 그림도 여기서 확인하고 승인해요.'),
     h('div', { class: 'tabs' },
       h('a', { href: '#/character/people', class: tab === 'people' ? 'on' : '' }, '인물'),
+      h('a', { href: '#/character/motion', class: tab === 'motion' ? 'on' : '' }, '🏃 동작'),
       h('a', { href: '#/character/library', class: tab === 'library' ? 'on' : '' }, '그림 보관함'),
       h('a', { href: '#/character/upload', class: tab === 'upload' ? 'on' : '' }, '그림 올리기'),
       h('a', { href: '#/character/requests', class: tab === 'requests' ? 'on' : '' }, '요청함')));
   if (tab === 'requests') page.append(requestPanel(ctx, 'character'));
   else if (tab === 'upload') page.append(uploadView(ctx));
   else if (tab === 'library') page.append(await libraryView(ctx, rest.slice(1)));
+  else if (tab === 'motion') page.append(await motionOverview(ctx, (await loadAll(ctx)).chars));
   else page.append(await peopleView(ctx, rest[1]));
   return page;
 }
 
 async function loadAll(ctx) {
-  const [reg, ch] = await Promise.all([loadRegistry(ctx.store), ctx.store.getJSON(CHARS, { characters: [] })]);
-  return { assets: reg, chars: ch.data };
+  const [reg, ch, sp] = await Promise.all([loadRegistry(ctx.store), ctx.store.getJSON(CHARS, { characters: [] }), ctx.store.getJSON(SPRITES, { sheets: {} })]);
+  return { assets: reg, chars: ch.data, sprites: sp.data };
 }
 
 // ---------- people ----------
 async function peopleView(ctx, id) {
-  const { assets, chars } = await loadAll(ctx);
+  const { assets, chars, sprites } = await loadAll(ctx);
   const list = chars.characters;
   const cur = list.find(c => c.id === id) || list[0];
   const side = h('div', { class: 'card tree people-list' }, list.map(c => {
@@ -65,7 +68,7 @@ async function peopleView(ctx, id) {
   }));
   return h('div', {},
     h('div', { class: 'row', style: { marginBottom: '10px' } }, h('button', { class: 'btn small', onclick: () => compareAll(ctx, chars) }, '👥 대화창 키 한눈에 비교')),
-    h('div', { class: 'split' }, side, personPage(ctx, cur, chars, assets)));
+    h('div', { class: 'split' }, side, personPage(ctx, cur, chars, assets, sprites)));
 }
 
 // A small dialogue-box stage with one portrait, used for fitting and comparing.
@@ -154,7 +157,7 @@ async function compareAll(ctx, chars) {
   await modal('대화창 키 비교 (기본 표정)', grid);
 }
 
-function personPage(ctx, c, chars, assets) {
+function personPage(ctx, c, chars, assets, sprites) {
   const emotions = chars.emotions || {};
   const mine = assets.filter(a => a.owner === c.id || a.owners?.includes(c.id));
   const portraitGrid = h('div', { class: 'thumb-grid' },
@@ -166,6 +169,7 @@ function personPage(ctx, c, chars, assets) {
     h('div', { class: 'card' },
       h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, c.name), c.displayName && h('span', { class: 'muted' }, `대사창 표시: ${c.displayName}`), h('span', { class: 'muted', style: { marginLeft: 'auto', fontSize: '12px' } }, `id: ${c.id}`)),
       h('p', { class: 'muted', style: { fontSize: '13px' } }, '인물 설정은 시나리오룸 → 등장인물 문서에 있어요.')),
+    sprites ? motionCard(ctx.store, sprites, c.id, '') : null,
     h('div', { class: 'card' },
       h('h2', {}, '대화 초상화 (표정별)'),
       Object.keys(c.portraits || {}).length ? portraitGrid : h('div', { class: 'empty' }, '아직 초상화가 없어요. 그림 올리기에서 올리고 승인한 뒤 "표정 초상화로 지정"을 눌러 주세요.'),
