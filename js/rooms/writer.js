@@ -1,5 +1,6 @@
 // Writer room: the story writer agent's proposals. Approve a scene to move it into the real story line.
 import { h, toast, confirmBox } from '../ui.js';
+import { thumb, viewImage } from '../assets.js';
 import { renderMarkdown } from '../md.js';
 
 const FILE = 'data/story_proposals.json';
@@ -44,6 +45,20 @@ function elements(p) {
   return parts.length ? h('div', { class: 'wp-elements' }, parts) : null;
 }
 
+// 작가가 Codex에 의뢰해 받은 그림 (이벤트 일러스트·디자인 시트 등)
+function gallery(ctx, p) {
+  const items = [];
+  for (const [k, il] of Object.entries(p.illustrations || {})) {
+    if (il.file) items.push({ file: il.file, cap: `🎞 ${il.title || k}` });
+    else items.push({ wait: true, cap: `🎞 ${il.title || k} — ${il.request?.codexTask ? il.request.codexTask + ' ' : ''}그림 기다리는 중` });
+  }
+  for (const im of p.images || []) items.push({ file: im.file, cap: im.caption || im.file.split('/').pop() });
+  if (!items.length) return null;
+  return h('div', {}, h('h3', {}, `그림 (${items.length})`), h('div', { class: 'thumb-grid big' }, items.map(it => it.wait
+    ? h('div', { class: 'thumb-card' }, h('div', { class: 'empty', style: { height: '110px' } }, '⏳'), h('div', { class: 'cap' }, it.cap))
+    : h('div', { class: 'thumb-card', onclick: () => viewImage(ctx.store, it.file, it.cap) }, thumb(ctx.store, it.file), h('div', { class: 'cap' }, it.cap)))));
+}
+
 function card(ctx, p, chars) {
   const target = p.targetFile || 'data/story/chapter1.json';
   const comment = h('textarea', { rows: 2, placeholder: '작가에게 할 말 (예: 미레트가 너무 쉽게 따라와요. 이유가 더 있어야 해요 / 이 인물 좋아요, 더 키워 주세요)' });
@@ -62,6 +77,13 @@ function card(ctx, p, chars) {
         d.scenes ||= {}; d.flow ||= [];
         let id = sc.id;
         while (d.scenes[id]) id = `${sc.id}_${Math.random().toString(36).slice(2, 5)}`;
+        // 장면이 쓰는 일러스트(show_illustration)를 정식 스토리의 illustrations로 함께 옮김
+        const keys = (sc.steps || []).filter(st => st.kind === 'cmd' && st.op === 'show_illustration').map(st => st.args?.key || st.args?.id).filter(Boolean);
+        d.illustrations ||= {};
+        for (const k of keys) if (p.illustrations?.[k] && !d.illustrations[k]) {
+          const il = p.illustrations[k];
+          d.illustrations[k] = { title: il.title || k, ...(il.file ? { file: il.file } : {}), ...(il.request ? { request: il.request } : {}), fromProposal: p.id };
+        }
         d.scenes[id] = { ...sc, id, status: '초안', note: `${sc.note || ''} [작가 제안 ${p.id}에서 승인 ${now.slice(0, 10)}]`.trim(), fromProposal: p.id };
         if (!d.flow.some(f => f.id === id)) d.flow.push({ kind: 'scene', id });
         return d;
@@ -115,6 +137,7 @@ function card(ctx, p, chars) {
       p.links && h('div', {}, h('b', {}, '앞 이야기와의 연결'), h('div', { html: md(p.links) })),
       p.inspirations?.length && h('div', {}, h('b', {}, '영감'), h('ul', {}, p.inspirations.map(x => h('li', {}, x))))),
     elements(p),
+    gallery(ctx, p),
     p.feedback?.length && h('div', { class: 'resp wp-feedback' }, p.feedback.map(f => h('div', {}, h('b', {}, f.by === '작가' ? '✍️ 작가: ' : '💬 의견: '), f.text, h('span', { class: 'muted', style: { fontSize: '11px' } }, ` ${String(f.at || '').slice(0, 10)}`)))),
     h('h3', {}, `장면 (${(p.scenes || []).length})`), scenes,
     p.status !== '편입됨' && p.status !== '반려' && h('div', { class: 'wp-actions' }, comment,
