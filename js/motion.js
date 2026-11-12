@@ -90,3 +90,17 @@ export async function motionOverview(ctx, chars) {
   return h('div', {}, h('p', { class: 'muted' }, '필드 걷기·전투 맵 대기·전투 애니메이션을 한눈에 봐요. 이상한 동작이 있으면 그 인물 이름과 방향을 요청함에 남겨 주세요.'),
     order.map(id => motionCard(ctx.store, { ...sp, npcMap: { ...sp.npcMap, [id]: sp.npcMap?.[gid[id] || id] || sp.npcMap?.[id] } }, id, nameOf(id))).filter(Boolean));
 }
+
+// 그림 파일 하나가 게임에서 어떻게 움직이는지 (그림 상세 창). 게임이 그 파일을 안 쓰면 null
+export function appliedPreview(store, sp, file) {
+  const keys = Object.entries(sp.sheets || {}).filter(([, v]) => v.file === file).map(([k]) => k);
+  const parts = [];
+  for (const k of keys) {
+    const sh = sp.sheets[k];
+    if (sh.dirs8) parts.push(h('div', { class: 'motion-block' }, h('b', {}, '필드 걷기 (8방향)'), walkCompass(store, sh, '걷기', 76)));
+    else if (sh.idleLoop) parts.push(h('div', { class: 'motion-block' }, h('b', {}, `전투 맵 대기 (초당 ${sh.fps || 8}칸)`),
+      h('div', { class: 'checker', style: { padding: '8px' } }, motionCanvas(store, { ...sh, cols: sh.idleLoop.length }, sh.idleLoop, sh.fps || 8, 150))));
+    for (const [id, cut] of Object.entries(sp.cutins || {})) if (cut.sheet === k) parts.push(h('div', { class: 'motion-block' }, h('b', {}, '전투 애니메이션 (옆모습)'), cutinRow(store, sp, cut)));
+  }
+  return parts.length ? h('div', { class: 'motion-wrap' }, parts) : null;
+}

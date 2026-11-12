@@ -2,9 +2,9 @@
 import { h, toast, modal, confirmBox, closeModal } from '../ui.js';
 import { portraitLayer, frameFor, loadDialogueLayout, layoutStage } from '../portrait.js';
 import { requestPanel } from './requests.js';
-import { motionCard, motionOverview, SPRITES } from '../motion.js';
+import { motionCard, motionOverview, appliedPreview, SPRITES } from '../motion.js';
 import {
-  KINDS, STATUSES, statusClass, CHARS, loadRegistry, updateRegistry, uploadAssets, uploadSources, findDuplicates, thumb, spritePlayer, viewImage,
+  KINDS, STATUSES, statusClass, CHARS, loadRegistry, updateRegistry, uploadAssets, uploadSources, findDuplicates, thumb, viewImage,
 } from '../assets.js';
 
 const SPRITE_KINDS = ['field', 'battle', 'cutin', 'effect'];
@@ -234,26 +234,14 @@ async function assetDetail(ctx, a, chars) {
     toast('정보를 저장했어요.'); refresh();
   };
 
-  // sprite preview for animation kinds
-  let player = null;
+  // 움직이는 그림: 게임이 실제로 쓰는 방식 그대로 보여 준다 (칸 나누기 입력 없음, 요청 req_mwczu4dzi0uz)
   const spriteBox = h('div');
   if (SPRITE_KINDS.includes(a.kind)) {
-    const url = await ctx.store.blobUrl(a.file);
-    player = spritePlayer(url, a.frames || {});
-    const num = (key, label, min = 1) => {
-      const i = h('input', { type: 'number', min, value: player._cfg[key], style: { width: '64px' } });
-      i.oninput = () => player._set({ [key]: Number(i.value) || min });
-      return h('label', { class: 'row', style: { gap: '4px' } }, label, i);
-    };
-    const saveFrames = async () => {
-      const { cols, rows, fps } = player._cfg;
-      await updateRegistry(ctx.store, list => { const x = list.find(y => y.id === a.id && y.file === a.file); if (x) x.frames = { cols, rows, fps }; }, `스프라이트 칸 정보: ${a.id}`);
-      toast('칸 나누기 정보를 저장했어요.');
-    };
+    const { data: sp } = await ctx.store.getJSON(SPRITES, { sheets: {} });
+    const pv = appliedPreview(ctx.store, sp, a.file);
     spriteBox.append(h('div', { class: 'card', style: { marginTop: '10px' } },
-      h('b', {}, '애니메이션 미리보기'),
-      h('div', { class: 'checker', style: { minHeight: '120px' } }, player),
-      h('div', { class: 'row' }, num('cols', '가로 칸'), num('rows', '세로 칸'), num('row', '재생 줄', 0), num('fps', '초당 프레임'), h('button', { class: 'btn small', onclick: saveFrames }, '칸 정보 저장'))));
+      h('b', {}, pv ? '게임에서 보이는 모습' : '움직임 미리보기'),
+      pv || h('p', { class: 'muted' }, a.status === '사용중' ? '게임 자료(sprites.json)에서 이 그림을 찾지 못했어요.' : '지금 게임에서 쓰지 않는 그림이라 움직임 미리보기가 없어요.')));
   }
 
   const portraitAssign = a.kind === 'portrait' && a.owner ? h('div', { class: 'row', style: { marginTop: '8px' } }, (() => {
@@ -317,7 +305,6 @@ async function assetDetail(ctx, a, chars) {
       h('label', { class: 'field' }, h('span', {}, '메모'), note),
       h('button', { class: 'btn small primary', onclick: saveInfo }, '정보 저장')));
   await viewImage(ctx.store, a.file, a.id, extra);
-  player?._stop();
 }
 
 // ---------- upload ----------
