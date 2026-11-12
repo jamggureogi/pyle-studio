@@ -147,6 +147,26 @@ function buildShell() {
     shellMain));
 }
 
+// 방 아이콘의 알림 숫자가 무엇인지 (요청 req_mwdt1e7334r9: "어디서 찾아야 할지를 모르겠습니다… 안내해 줄 수 있는 표시")
+let badgeInfo = { waiting: [] };
+const NOTICE_SKIP = ['home', 'requests', 'decide', 'review', 'codex'];
+
+function roomNotice(roomId, el, rest) {
+  if (NOTICE_SKIP.includes(roomId)) return;
+  const list = badgeInfo.waiting.filter(r => r.room === roomId);
+  const tab = el.querySelector(`.tabs a[href$="/requests"]`);
+  if (tab && list.length) tab.append(h('span', { class: 'badge warn', style: { marginLeft: '6px' } }, String(list.length)));
+  if (!list.length || rest?.[0] === 'requests') return;
+  const box = h('div', { class: 'card room-notice' },
+    h('div', { class: 'row' },
+      h('b', {}, `🔔 알림 ${list.length}건 — 이 방의 [요청함] 탭에 있는 요청이에요`),
+      h('span', { class: 'spacer' }),
+      h('a', { class: 'btn small primary', href: `#/${roomId}/requests` }, '요청함 탭 열기')),
+    h('ul', {}, list.map(r => h('li', {}, h('span', { class: `badge ${r.status === '대기' ? 'warn' : 'info'}` }, r.status), ' ', r.title || '(제목 없음)'))));
+  const anchor = el.querySelector('.tabs') || el.querySelector('.sub') || el.querySelector('h1');
+  if (anchor) anchor.after(box); else el.prepend(box);
+}
+
 async function updateBadges() {
   try {
     const safe = (path, fb) => store.getJSON(path, fb).catch(() => ({ data: fb }));
@@ -157,6 +177,7 @@ async function updateBadges() {
       codex: (cx.data.tasks || []).filter(t => ['완료', '질문'].includes(t.status)).length,
     };
     const waiting = (data.requests || []).filter(r => r.status === '대기' || r.status === '진행중');
+    badgeInfo = { waiting };
     const drafts = (data.requests || []).filter(r => r.status === '임시저장').length;   // 감독 초안은 요청함에만 표시
     const count = room => waiting.filter(r => room === 'requests' || r.room === room).length + (room === 'requests' ? drafts : 0);
     for (const r of ROOMS) {
@@ -183,6 +204,7 @@ async function render() {
     if (my !== renderToken) return;
     shellMain.replaceChildren(el);
     shellMain.scrollTop = 0;
+    try { roomNotice(def.id, el, rest); } catch { /* 안내는 없어도 됨 */ }
   } catch (e) {
     if (my !== renderToken) return;
     shellMain.replaceChildren(h('div', { class: 'page' }, errorBox(e)));

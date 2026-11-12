@@ -446,3 +446,6 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .people-list .group-head{font-size:12px;font-weight:700;color:var(--muted,#8a8070);margin:10px 4px 4px;letter-spacing:.02em}
 .people-list .group-head:first-child{margin-top:0}
 .cg-slot.big{width:240px;height:135px}.cg-slot.big img{width:100%;height:100%;object-fit:cover}
+.room-notice{border-left:4px solid #e3b341;background:#fffaf0;margin:8px 0 12px}
+.room-notice ul{margin:6px 0 0 18px;padding:0}
+.room-notice li{margin:3px 0;font-size:14px}
