@@ -30,18 +30,17 @@ async function approveAll(ctx, list) {
 }
 
 export async function render(ctx, rest) {
-  const tab = ['people', 'motion', 'requests'].includes(rest[0]) ? rest[0] : 'people';
+  if (rest[0] === 'motion') { ctx.go('#/character/people'); return h('div'); }     // 동작은 인물마다 페이지 안에서 (요청 req_mwdb6oz56sxj)
+  const tab = ['people', 'requests'].includes(rest[0]) ? rest[0] : 'people';
   if (['library', 'upload'].includes(rest[0])) { ctx.go('#/art'); return h('div'); }
   const page = h('div', { class: 'page wide' },
     h('h1', {}, '🧑 캐릭터룸'),
     h('p', { class: 'sub' }, '인물별 초상화·동작(걷기·전투 대기·전투 애니메이션)을 봐요. 모든 그림 목록은 🗂 그림 메뉴에 있어요.'),
     h('div', { class: 'tabs' },
       h('a', { href: '#/character/people', class: tab === 'people' ? 'on' : '' }, '인물'),
-      h('a', { href: '#/character/motion', class: tab === 'motion' ? 'on' : '' }, '🏃 동작'),
       h('a', { href: '#/art' }, '🗂 그림 메뉴로 →'),
       h('a', { href: '#/character/requests', class: tab === 'requests' ? 'on' : '' }, '요청함')));
   if (tab === 'requests') page.append(requestPanel(ctx, 'character'));
-  else if (tab === 'motion') page.append(await motionOverview(ctx, (await loadAll(ctx)).chars));
   else page.append(await peopleView(ctx, rest[1]));
   return page;
 }
@@ -54,19 +53,45 @@ async function loadAll(ctx) {
 // ---------- people ----------
 async function peopleView(ctx, id) {
   const { assets, chars, sprites } = await loadAll(ctx);
-  const list = chars.characters;
-  const cur = list.find(c => c.id === id) || list[0];
-  const side = h('div', { class: 'card tree people-list' }, list.map(c => {
-    const file = c.portraits?.normal || Object.values(c.portraits || {})[0];
-    const n = assets.filter(a => (a.owner === c.id || a.owners?.includes(c.id)) && a.rework && ['요청', '요청됨'].includes(a.rework.status)).length;   // 수정 요청 중인 그림 수
-    return h('a', { href: `#/character/people/${c.id}`, class: c.id === cur.id ? 'on' : '' },
-      file ? thumb(ctx.store, file, 'avatar') : h('div', { class: 'avatar' }, c.name.slice(0, 1)),
-      h('span', { class: 'name' }, c.name, c.displayName && h('small', { class: 'muted' }, ` (${c.displayName})`)),
-      n ? h('span', { class: 'badge warn' }, n) : null);
-  }));
+  // 무리: 등장인물(대사·초상화가 있는 인물) / NPC(마을 주민 등, 걷는 그림만) / 마물 (요청 req_mwdb6oz56sxj)
+  const cids = new Set(chars.characters.map(c => c.id));
+  const { data: mons } = await ctx.store.getJSON('data/battle/monsters.json', { monsters: [] });
+  const npcs = Object.entries(sprites.npcMap || {}).filter(([k]) => !cids.has(k))
+    .map(([k, v]) => ({ id: k, name: v.name || k, sheet: v.sheet, owner: (v.sheet || '').replace(/_walk8$/, '') }));
+  const monIds = new Set([...(mons.monsters || []).map(m => m.id), ...Object.keys(sprites.cutins || {}), ...Object.keys(sprites.battleSprites || {})].filter(k => !cids.has(k)));
+  const monsters = [...monIds].map(k => ({ id: k, name: (mons.monsters || []).find(m => m.id === k)?.name || k, owner: k }));
+  const groups = [['등장인물', chars.characters.map(c => ({ id: c.id, name: c.name, sub: c.displayName, c }))], ['NPC', npcs], ['마물', monsters]];
+  const all = groups.flatMap(([g, arr]) => arr.map(x => ({ ...x, group: g })));
+  const cur = all.find(x => x.id === id) || all[0];
+  const reworkN = owner => assets.filter(a => (a.owner === owner || a.owners?.includes(owner)) && a.rework && ['요청', '요청됨'].includes(a.rework.status)).length;
+  const side = h('div', { class: 'card tree people-list' }, groups.map(([g, arr]) => [
+    h('div', { class: 'group-head' }, `${g} (${arr.length})`),
+    arr.map(x => {
+      const file = x.c ? (x.c.portraits?.normal || Object.values(x.c.portraits || {})[0]) : null;
+      const n = reworkN(x.c ? x.id : x.owner);
+      return h('a', { href: `#/character/people/${x.id}`, class: x.id === cur.id ? 'on' : '' },
+        file ? thumb(ctx.store, file, 'avatar') : h('div', { class: 'avatar' }, (x.name || '?').slice(0, 1)),
+        h('span', { class: 'name' }, x.name, x.sub && h('small', { class: 'muted' }, ` (${x.sub})`)),
+        n ? h('span', { class: 'badge warn' }, n) : null);
+    })]));
+  const body = cur.c ? personPage(ctx, cur.c, chars, assets, sprites) : otherPage(ctx, cur, chars, assets, sprites);
   return h('div', {},
     h('div', { class: 'row', style: { marginBottom: '10px' } }, h('button', { class: 'btn small', onclick: () => compareAll(ctx, chars) }, '👥 대화창 키 한눈에 비교')),
-    h('div', { class: 'split' }, side, personPage(ctx, cur, chars, assets, sprites)));
+    h('div', { class: 'split' }, side, body));
+}
+
+// NPC·마물: 대사 초상화 없이 게임 속 움직임과 등록 그림만
+function otherPage(ctx, x, chars, assets, sprites) {
+  const mine = assets.filter(a => a.owner === x.owner || a.owner === x.id || a.owners?.includes(x.owner));
+  const byKind = {};
+  for (const a of mine) (byKind[a.kind] ||= []).push(a);
+  const card = motionCard(ctx.store, sprites, x.id, '');
+  return h('div', {},
+    h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { style: { margin: 0 } }, x.name), h('span', { class: 'badge info' }, x.group),
+      h('span', { class: 'muted', style: { marginLeft: 'auto', fontSize: '12px' } }, `id: ${x.id}`))),
+    card || h('div', { class: 'card empty' }, '아직 게임에서 움직이는 그림이 없어요.'),
+    h('div', { class: 'card' }, h('h2', {}, '등록 그림'),
+      mine.length ? Object.entries(byKind).map(([k, arr]) => [h('h4', { class: 'muted' }, KINDS[k] || k), assetGrid(ctx, arr, chars)]) : h('div', { class: 'empty' }, '등록된 그림이 없어요.')));
 }
 
 // A small dialogue-box stage with one portrait, used for fitting and comparing.

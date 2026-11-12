@@ -442,3 +442,7 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .opts.with-img .opt{flex-direction:column;align-items:stretch}
 .opt-img{display:block;cursor:zoom-in;background:#ebe5d8;border-radius:6px;overflow:hidden;margin:4px 0}
 .opt-img .thumb,.opt-img img{width:100%;height:200px;object-fit:contain;display:block}
+
+.people-list .group-head{font-size:12px;font-weight:700;color:var(--muted,#8a8070);margin:10px 4px 4px;letter-spacing:.02em}
+.people-list .group-head:first-child{margin-top:0}
+.cg-slot.big{width:240px;height:135px}.cg-slot.big img{width:100%;height:100%;object-fit:cover}

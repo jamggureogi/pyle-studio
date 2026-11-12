@@ -2,7 +2,7 @@
 import { h, toast, loading, errorBox, confirmBox, modal, closeModal } from '../ui.js';
 import { requestPanel, newId } from './requests.js';
 import { makeDraggable, moveInArray } from '../drag.js';
-import { loadRegistry, updateRegistry } from '../assets.js';
+import { loadRegistry, updateRegistry, viewImage } from '../assets.js';
 import { portraitLayer, loadDialogueLayout, layoutStage } from '../portrait.js';
 
 // 장(파일) 선택: 프롤로그 + 작가 제안에서 편입된 장들 (data/story/*.json)
@@ -498,13 +498,17 @@ function hoverPreview(url, e) {
   Object.assign(hoverBox.style, { display: 'block', width: `${w}px`, left: `${x}px`, top: `${Math.max(10, Math.min(e.clientY - 120, window.innerHeight - w * 0.62 - 10))}px` });
 }
 
-// Candidates for an illustration slot: registry "event" images tagged with this key, plus ones linked by hand.
-function cgCandidates(key) {
+// 이 장면(칸)용으로 만들어진 그림 전부: 지금 고른 그림, 직접 연결한 그림, 이 칸 id로 등록된 이벤트 그림(보관 포함), 새것부터 (요청 req_mwdb484exvie)
+function cgAllForKey(key) {
   const ill = S.story.illustrations?.[key] || {};
-  const files = [...(ill.candidates || [])];
-  for (const a of S.assets) if (a.kind === 'event' && a.illustrationKey === key && a.status !== '보관' && !files.includes(a.file)) files.push(a.file);
-  if (ill.file && !files.includes(ill.file)) files.unshift(ill.file);
-  return files.slice(0, MAX_CG);
+  const reg = S.assets.filter(a => a.kind === 'event' && a.illustrationKey === key)
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  const files = [];
+  const add = f => { if (f && !files.includes(f)) files.push(f); };
+  add(ill.file);
+  for (const a of reg) add(a.file);
+  for (const f of ill.candidates || []) add(f);
+  return files;
 }
 
 async function saveIllustrations(ctx, message) {
@@ -544,33 +548,28 @@ function cgPicker(ctx, st, change, redraw) {
   const strip = h('div', { class: 'cg-strip' });
   if (key && ills[key]) {
     const ill = ills[key];
-    const cands = cgCandidates(key);
+    const all = cgAllForKey(key);
     const pick = async file => {
       ill.file = file; ill.status = '선택됨';
       try {
         await saveIllustrations(ctx, `일러스트 선택: ${key}`);
-        await updateRegistry(ctx.store, all => { for (const a of all) if (a.file === file) a.status = '사용중'; }, `일러스트 사용 시작: ${key}`);
-        toast(`"${ill.title}" 일러스트를 골랐어요.`);
+        await updateRegistry(ctx.store, list => { for (const a of list) if (a.file === file) a.status = '사용중'; else if (a.kind === 'event' && a.illustrationKey === key && a.status === '사용중') a.status = '보관'; }, `일러스트 교체: ${key}`);
+        toast(`"${ill.title}" 일러스트를 바꿨어요.`);
       } catch (e) { toast(e.message, true); }
       hoverPreview(null); redraw();
     };
-    for (let i = 0; i < MAX_CG; i++) {
-      const file = cands[i];
-      if (!file) {
-        strip.append(h('button', { class: 'cg-slot empty', onclick: () => linkCandidate(ctx, key, redraw), title: 'Codex가 이 칸 id로 등록하면 자동으로 나타나요. 직접 연결도 할 수 있어요.' }, '+ 후보'));
-        continue;
-      }
-      const slot = h('button', { class: `cg-slot ${ill.file === file ? 'on' : ''}`, title: '마우스를 올리면 크게 보여요. 누르면 이 그림으로 선택' }, h('span', { class: 'muted' }, '…'));
-      S.store.blobUrl(file).then(u => {
-        slot.replaceChildren(...[h('img', { src: u }), ill.file === file && h('span', { class: 'cg-check' }, '✓')].filter(Boolean));
-        slot.onmouseenter = e => hoverPreview(u, e);
-        slot.onmousemove = e => hoverPreview(u, e);
-        slot.onmouseleave = () => hoverPreview(null);
-      }).catch(() => slot.replaceChildren(h('span', { class: 'muted' }, '없음')));
-      slot.onclick = () => pick(file);
-      strip.append(slot);
-    }
-    strip.append(h('span', { class: 'muted cg-note' }, ill.file ? '✓ 선택됨' : cands.length ? '하나를 골라 주세요' : `id "${key}"로 등록된 후보가 아직 없어요`));
+    // 지금 쓰는 그림 한 장 + [교체] (후보 3칸 대신, 이 장면용 그림 전부에서 고르기)
+    const slot = h('button', { class: `cg-slot big ${ill.file ? 'on' : 'empty'}`, title: ill.file ? '마우스를 올리면 크게 보여요' : '' }, ill.file ? h('span', { class: 'muted' }, '…') : '아직 없음');
+    if (ill.file) S.store.blobUrl(ill.file).then(u => {
+      slot.replaceChildren(h('img', { src: u }));
+      slot.onmouseenter = e => hoverPreview(u, e);
+      slot.onmousemove = e => hoverPreview(u, e);
+      slot.onmouseleave = () => hoverPreview(null);
+      slot.onclick = () => viewImage(ctx.store, ill.file, ill.title);
+    }).catch(() => slot.replaceChildren(h('span', { class: 'muted' }, '그림 없음')));
+    strip.append(slot,
+      h('button', { class: 'btn small', onclick: () => swapIllustration(ctx, key, all, pick) }, all.length ? `🔄 교체 (이 장면용 ${all.length}장)` : '🔄 교체'),
+      h('span', { class: 'muted cg-note' }, ill.file ? '✓ 쓰는 중' : all.length ? '[교체]를 눌러 골라 주세요' : '이 장면용 그림이 아직 없어요'));
   }
   const hint = !key && h('p', { class: 'muted cg-hint' }, '아직 일러스트를 고르지 않았어요. 목록에서 고르거나, 마음에 드는 게 없으면 "+ 새 일러스트 칸 만들기"로 원하는 그림을 요청하세요.');
   return h('div', { class: 'cg-picker' }, h('div', { class: 'row' }, keySel, h('span', { class: 'muted', style: { fontSize: '12px' } }, '나타나는 시간'), dur, h('span', { class: 'muted', style: { fontSize: '12px' } }, '초')), strip, hint, key && ills[key] && requestBox(ctx, key, redraw));
@@ -628,6 +627,24 @@ async function linkCandidate(ctx, key, redraw) {
   if (!ill.candidates.includes(choice)) ill.candidates.push(choice);
   try { await saveIllustrations(ctx, `일러스트 후보 연결: ${key}`); } catch (e) { toast(e.message, true); }
   redraw();
+}
+
+// [교체]: 이 장면용으로 만든 그림 전부를 보여 주고 하나를 고르면 바로 바꿈. 다른 장면용 그림을 가져오려면 아래 [다른 그림 연결]
+async function swapIllustration(ctx, key, files, pick) {
+  const ill = S.story.illustrations[key];
+  const grid = h('div', { class: 'thumb-grid big' });
+  const choice = await new Promise(resolve => {
+    if (!files.length) grid.append(h('div', { class: 'empty' }, '이 장면용 그림이 아직 없어요. 아래 "원하는 그림 요청하기"로 요청하거나 [다른 그림 연결]을 눌러 주세요.'));
+    for (const f of files) {
+      const card = h('div', { class: `thumb-card ${f === ill.file ? 'on' : ''}`, onclick: () => { resolve(f); closeModal(); } }, h('div', { class: 'thumb' }, '…'),
+        h('div', { class: 'cap' }, f === ill.file ? '✓ 지금 쓰는 그림' : f.split('/').slice(-2).join('/')));
+      S.store.blobUrl(f).then(u => card.firstChild.replaceChildren(h('img', { src: u })));
+      grid.append(card);
+    }
+    modal(`「${ill.title || key}」 그림 교체 — 고르면 바로 바뀌어요`, grid, [{ label: '다른 그림 연결', value: 'link' }, { label: '닫기', value: null }]).then(v => resolve(v));
+  });
+  if (choice === 'link') return linkCandidate(ctx, key, () => window.dispatchEvent(new HashChangeEvent('hashchange')));
+  if (choice) pick(choice);
 }
 
 // ---------- preview ----------
