@@ -1,7 +1,7 @@
 // Request box: the user leaves requests per room; Claude reads data/requests.json and answers.
 import { h, toast, fmtDate, confirmBox, loading, errorBox } from '../ui.js';
 import { ROOMS, roomName } from '../app.js';
-import { thumb, viewImage, fileToB64 } from '../assets.js';
+import { fileToB64, imageStrip } from '../assets.js';
 
 const FILE = 'data/requests.json';
 const STATUS = ['대기', '진행중', '완료', '보류'];
@@ -78,12 +78,7 @@ export function requestPanel(ctx, room) {
     );
   }
 
-  // 요청에 붙은 그림 (사용자 첨부 또는 감독이 표시해 붙인 화면)
-  function pics(r) {
-    if (!r.images?.length) return null;
-    return h('div', { class: 'thumb-grid req-pics' }, r.images.map(im => h('div', { class: 'thumb-card', onclick: () => viewImage(ctx.store, im.file, im.caption || r.title) },
-      thumb(ctx.store, im.file), im.caption && h('div', { class: 'cap' }, im.caption))));
-  }
+  const pics = r => imageStrip(ctx.store, r.images, r.title);
 
   // 감독 에이전트가 써 둔 초안: 고쳐서 [요청 남기기] 또는 지우기
   function draftItem(r) {

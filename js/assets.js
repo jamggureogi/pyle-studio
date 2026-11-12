@@ -148,3 +148,10 @@ export async function uploadSources(store, files, folder, note, onProgress) {
   }, `요청 추가: 원본 가공 ${dir}`, { requests: [] });
   return { dir, saved };
 }
+
+// 요청·결정에 붙은 그림 (images: [{file, caption}]) — 작게 보이고 누르면 크게
+export function imageStrip(store, images, title) {
+  if (!images?.length) return null;
+  return h('div', { class: 'thumb-grid req-pics' }, images.map(im => h('div', { class: 'thumb-card', onclick: () => viewImage(store, im.file, im.caption || title) },
+    thumb(store, im.file), im.caption && h('div', { class: 'cap', title: im.caption }, im.caption))));
+}

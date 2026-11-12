@@ -1,6 +1,7 @@
 // Decisions room: Claude's proposals as clickable choices, with a comment box per item.
 import { h, toast, fmtDate, fill } from '../ui.js';
 import { renderMarkdown } from '../md.js';
+import { imageStrip } from '../assets.js';
 
 const FILE = 'data/decisions.json';
 const inline = t => renderMarkdown(t || '').replace(/^<p>|<\/p>$/g, '');
@@ -81,6 +82,7 @@ function card(ctx, d, tab) {
         d.createdBy === '감독' && h('span', { class: 'badge draft' }, '🔍 감독 제안'),
         decided ? h('span', { class: 'badge ok' }, '결정됨') : answered ? h('span', { class: 'badge info' }, '제출함 · 반영 대기') : h('span', { class: 'badge warn' }, '대기')),
       d.context && h('p', { class: 'ctx', html: inline(d.context) }),
+      imageStrip(ctx.store, d.images, d.title),
       d.link && h('a', { href: d.link, class: 'small-link' }, '관련 화면 열기 →'),
       h('div', { class: 'opts' }, optEls),
       h('label', { class: 'field', style: { marginTop: '10px' } }, comment),
