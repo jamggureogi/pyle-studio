@@ -10,7 +10,7 @@ export async function render(ctx) {
     ctx.store.getJSON('data/decisions.json', { decisions: [] }).then(r => (r.data.decisions || []).filter(d => d.status === '대기')).catch(() => []),
   ]);
   const by = s => reqs.filter(r => r.status === s);
-  const candidates = assets.filter(a => a.status === '후보');
+  const reworks = assets.filter(a => a.rework && ['요청', '요청됨'].includes(a.rework.status));
   const stat = (n, label, cls, href) => h('a', { href, style: { textDecoration: 'none', color: 'inherit' } },
     h('div', { class: 'card', style: { textAlign: 'center', margin: 0 } },
       h('div', { style: { fontSize: '28px', fontWeight: 700 } }, n), h('span', { class: `badge ${cls}` }, label)));
@@ -22,7 +22,7 @@ export async function render(ctx) {
       stat(by('대기').length, '요청 대기', 'warn', '#/requests'),
       stat(by('진행중').length, '진행 중', 'info', '#/requests'),
       stat(by('완료').length, '완료', 'ok', '#/requests'),
-      stat(candidates.length, '승인 대기 그림', 'danger', '#/character/library/후보'),
+      stat(reworks.length, '수정 요청 중 그림', 'danger', '#/art/list/수정요청'),
       stat(decisions.length, '결정 대기', 'warn', '#/decide'),
     ),
     h('div', { class: 'grid' },

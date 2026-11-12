@@ -30,19 +30,17 @@ async function approveAll(ctx, list) {
 }
 
 export async function render(ctx, rest) {
-  const tab = ['people', 'motion', 'library', 'upload', 'requests'].includes(rest[0]) ? rest[0] : 'people';
+  const tab = ['people', 'motion', 'requests'].includes(rest[0]) ? rest[0] : 'people';
+  if (['library', 'upload'].includes(rest[0])) { ctx.go('#/art'); return h('div'); }
   const page = h('div', { class: 'page wide' },
     h('h1', {}, '🧑 캐릭터룸'),
-    h('p', { class: 'sub' }, '인물별 초상화와 스프라이트, 모든 그림의 후보·승인·사용 상태를 관리해요. Codex나 Claude가 만든 그림도 여기서 확인하고 승인해요.'),
+    h('p', { class: 'sub' }, '인물별 초상화·동작(걷기·전투 대기·전투 애니메이션)을 봐요. 모든 그림 목록은 🗂 그림 메뉴에 있어요.'),
     h('div', { class: 'tabs' },
       h('a', { href: '#/character/people', class: tab === 'people' ? 'on' : '' }, '인물'),
       h('a', { href: '#/character/motion', class: tab === 'motion' ? 'on' : '' }, '🏃 동작'),
-      h('a', { href: '#/character/library', class: tab === 'library' ? 'on' : '' }, '그림 보관함'),
-      h('a', { href: '#/character/upload', class: tab === 'upload' ? 'on' : '' }, '그림 올리기'),
+      h('a', { href: '#/art' }, '🗂 그림 메뉴로 →'),
       h('a', { href: '#/character/requests', class: tab === 'requests' ? 'on' : '' }, '요청함')));
   if (tab === 'requests') page.append(requestPanel(ctx, 'character'));
-  else if (tab === 'upload') page.append(uploadView(ctx));
-  else if (tab === 'library') page.append(await libraryView(ctx, rest.slice(1)));
   else if (tab === 'motion') page.append(await motionOverview(ctx, (await loadAll(ctx)).chars));
   else page.append(await peopleView(ctx, rest[1]));
   return page;
@@ -60,7 +58,7 @@ async function peopleView(ctx, id) {
   const cur = list.find(c => c.id === id) || list[0];
   const side = h('div', { class: 'card tree people-list' }, list.map(c => {
     const file = c.portraits?.normal || Object.values(c.portraits || {})[0];
-    const n = assets.filter(a => (a.owner === c.id || a.owners?.includes(c.id)) && a.status === '후보').length;
+    const n = assets.filter(a => (a.owner === c.id || a.owners?.includes(c.id)) && a.rework && ['요청', '요청됨'].includes(a.rework.status)).length;   // 수정 요청 중인 그림 수
     return h('a', { href: `#/character/people/${c.id}`, class: c.id === cur.id ? 'on' : '' },
       file ? thumb(ctx.store, file, 'avatar') : h('div', { class: 'avatar' }, c.name.slice(0, 1)),
       h('span', { class: 'name' }, c.name, c.displayName && h('small', { class: 'muted' }, ` (${c.displayName})`)),
@@ -182,39 +180,36 @@ function personPage(ctx, c, chars, assets, sprites) {
 }
 
 // ---------- library ----------
-async function libraryView(ctx, rest) {
+// 상태는 두 가지로만 보여요: 적용(게임에 쓰는 중 = 사용중) / 보관(그 밖). Claude가 검수해서 바로 적용하고, 사용자는 적용된 것 중 마음에 안 드는 것을 수정 요청 (사용자 결정 11/12)
+export const applied = a => a.status === '사용중';
+export const shownStatus = a => applied(a) ? '적용' : '보관';
+export async function libraryView(ctx, rest) {
   const { assets, chars } = await loadAll(ctx);
-  const f = { status: rest[0] || '후보', kind: rest[1] || '', owner: rest[2] || '' };
-  const go = patch => { const n = { ...f, ...patch }; ctx.go(`#/character/library/${n.status}/${n.kind}/${n.owner}`); };
+  const f = { status: rest[0] || '적용', kind: rest[1] || '', owner: rest[2] || '' };
+  const go = patch => { const n = { ...f, ...patch }; ctx.go(`#/art/list/${n.status}/${n.kind}/${n.owner}`); };
   const sel = (opts, val, key) => {
     const s = h('select', {}, opts.map(([v, l]) => h('option', { value: v, selected: v === val }, l)));
     s.onchange = () => go({ [key]: s.value });
     return s;
   };
   const reworking = a => a.rework && ['요청', '요청됨'].includes(a.rework.status);
-  const counts = Object.fromEntries(STATUSES.map(s => [s, assets.filter(a => a.status === s).length]));
-  counts['재작업'] = assets.filter(reworking).length;
-  const shown = assets.filter(a => (f.status === '전체' || (f.status === '재작업' ? reworking(a) : a.status === f.status)) && (!f.kind || a.kind === f.kind) && (!f.owner || a.owner === f.owner || a.owners?.includes(f.owner)));
+  const TABS = [['적용', applied, '게임에 적용된 그림'], ['보관', a => !applied(a), '게임에 쓰지 않는 그림 (예전 그림·고르지 않은 후보·참고 자료)'], ['수정요청', reworking, '다시 만들어 달라고 요청한 그림'], ['전체', () => true, '']];
+  const cur = TABS.find(t => t[0] === f.status) || TABS[0];
+  const shown = assets.filter(a => cur[1](a) && (!f.kind || a.kind === f.kind) && (!f.owner || a.owner === f.owner || a.owners?.includes(f.owner)));
   return h('div', {},
     h('div', { class: 'card row' },
-      h('div', { class: 'tabs', style: { margin: 0, border: 0 } }, [...STATUSES, '재작업', '전체'].map(s => h('a', { href: '#', class: s === f.status ? 'on' : '', title: s === '재작업' ? '다시 만들어 달라고 요청한 그림' : '', onclick: e => { e.preventDefault(); go({ status: s }); } }, s === '전체' ? `전체 (${assets.length})` : s === '재작업' ? `↺ 재작업 요청 (${counts[s]})` : `${s} (${counts[s]})`))),
+      h('div', { class: 'tabs', style: { margin: 0, border: 0 } }, TABS.map(([s, fn, tip]) => h('a', { href: '#', class: s === cur[0] ? 'on' : '', title: tip, onclick: e => { e.preventDefault(); go({ status: s }); } }, `${s === '수정요청' ? '↺ 수정 요청 중' : s} (${assets.filter(fn).length})`))),
       h('span', { class: 'spacer' }),
       sel([['', '모든 종류'], ...Object.entries(KINDS)], f.kind, 'kind'),
       sel([['', '모든 인물'], ...chars.characters.map(c => [c.id, c.name])], f.owner, 'owner')),
-    f.status === '후보' && shown.length > 1 && h('div', { class: 'card row' },
-      h('span', {}, `보이는 후보 ${shown.length}장`),
-      h('button', { class: 'btn primary', onclick: async () => {
-        if (!await confirmBox(`보이는 후보 ${shown.length}장을 모두 승인할까요? 표정이 정해진 초상화는 바로 교체돼요.`, '모두 승인')) return;
-        try { const n = await approveAll(ctx, shown); toast(`${shown.length}장을 승인했어요${n ? ` (초상화 ${n}장 교체)` : ''}.`); ctx.refreshBadges(); window.dispatchEvent(new HashChangeEvent('hashchange')); }
-        catch (e) { toast(e.message, true); }
-      } }, '✔ 모두 승인')),
-    shown.length ? h('div', { class: 'card' }, assetGrid(ctx, shown, chars)) : h('div', { class: 'card empty' }, f.status === '후보' ? '승인 대기 중인 그림이 없어요.' : '조건에 맞는 그림이 없어요.'));
+    cur[0] === '적용' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '게임에 쓰고 있는 그림이에요. 마음에 안 드는 그림을 눌러 "↺ 수정 요청"을 남기면 Claude가 다시 만들어 바꿔 넣어요.'),
+    shown.length ? h('div', { class: 'card' }, assetGrid(ctx, shown, chars)) : h('div', { class: 'card empty' }, '조건에 맞는 그림이 없어요.'));
 }
 
 function assetGrid(ctx, list, chars) {
   return h('div', { class: 'thumb-grid big' }, list.map(a => h('div', { class: 'thumb-card', onclick: () => assetDetail(ctx, a, chars) },
     thumb(ctx.store, a.file),
-    h('div', { class: 'cap' }, h('span', { class: `badge ${statusClass[a.status] || ''}` }, a.status), a.rework && ['요청', '요청됨'].includes(a.rework.status) && h('span', { class: 'badge danger', title: a.rework.comment }, '↺ 재작업'), ' ', a.id),
+    h('div', { class: 'cap' }, h('span', { class: `badge ${applied(a) ? 'ok' : ''}` }, shownStatus(a)), a.rework && ['요청', '요청됨'].includes(a.rework.status) && h('span', { class: 'badge danger', title: a.rework.comment }, '↺ 재작업'), ' ', a.id),
     h('div', { class: 'cap muted' }, `${KINDS[a.kind] || a.kind}${a.owner ? ' · ' + (chars.characters.find(c => c.id === a.owner)?.name || a.owner) : ''} · ${a.createdBy || ''}`))));
 }
 
@@ -284,7 +279,7 @@ async function assetDetail(ctx, a, chars) {
   // 어떤 상태의 그림이든 의견과 함께 다시 만들어 달라고 요청 → Claude가 Codex 작업으로 옮긴다
   const rework = async () => {
     const ta = h('textarea', { rows: 4, placeholder: '무엇이 마음에 안 드나요? 예) 얼굴이 너무 어려 보여요 / 문이 작아서 들어갈 수 없을 것 같아요 / 색이 다른 그림과 안 어울려요' });
-    const ok = await modal(`"${a.id}" 다시 만들기 요청`, h('div', {},
+    const ok = await modal(`"${a.id}" 수정 요청`, h('div', {},
       h('label', { class: 'field' }, h('span', {}, '의견'), ta),
       h('p', { class: 'muted', style: { fontSize: '12px', margin: 0 } }, '저장하면 Claude가 확인해서 Codex에게 다시 그려 달라고 맡겨요. 새 그림이 오기 전까지 지금 그림은 그대로 써요.')),
       [{ label: '취소', value: false }, { label: '요청하기', value: true, primary: true }]);
@@ -297,7 +292,7 @@ async function assetDetail(ctx, a, chars) {
         (d.requests ||= []).unshift({ id: 'req_' + Date.now().toString(36), room: 'character', kind: 'rework', assetId: a.id, file: a.file, title: `그림 다시 만들기: ${a.id}`, body: ta.value.trim(), status: '대기', createdAt: now, updatedAt: now, createdBy: '사용자', response: '' });
         return d;
       }, `요청 추가: 그림 다시 만들기 ${a.id}`, { requests: [] });
-      toast('다시 만들기를 요청했어요.'); ctx.refreshBadges(); refresh();
+      toast('수정을 요청했어요.'); ctx.refreshBadges(); refresh();
     } catch (e) { toast(e.message, true); }
   };
   const rw = a.rework;
@@ -306,17 +301,13 @@ async function assetDetail(ctx, a, chars) {
     rw.response && h('div', { class: 'muted', style: { marginTop: '4px' } }, '🧩 Claude: ', rw.response));
 
   const actions = h('div', { class: 'row', style: { marginTop: '10px' } },
-    h('button', { class: 'btn', onclick: rework, title: '마음에 안 들면 의견과 함께 다시 그려 달라고 요청해요' }, '↺ 다시 만들어 주세요'),
-    a.status === '후보' && h('button', { class: 'btn primary', onclick: async () => { const n = await approveAll(ctx, [a]); toast(n ? '승인하고 초상화를 교체했어요.' : '승인했어요.'); ctx.refreshBadges(); refresh(); } }, '✔ 승인'),
-    a.status !== '사용중' && a.status !== '후보' && h('button', { class: 'btn', onclick: () => setStatus('사용중', '사용 시작') }, '게임에 사용'),
-    a.status !== '보관' && h('button', { class: 'btn', onclick: () => setStatus('보관', '보관') }, a.status === '후보' ? '반려(보관)' : '보관'),
-    a.status === '보관' && h('button', { class: 'btn', onclick: () => setStatus('후보', '후보로 되돌리기') }, '후보로 되돌리기'),
+    h('button', { class: 'btn', onclick: rework, title: '마음에 안 들면 의견과 함께 다시 만들어 달라고 요청해요' }, '↺ 수정 요청'),
     h('span', { class: 'spacer' }),
-    h('button', { class: 'btn danger', onclick: del }, '삭제'));
+    !applied(a) && h('button', { class: 'btn danger', onclick: del }, '삭제'));
 
   const extra = h('div', {},
     h('div', { class: 'row', style: { marginTop: '8px', fontSize: '13px' } },
-      h('span', { class: `badge ${statusClass[a.status] || ''}` }, a.status),
+      h('span', { class: `badge ${applied(a) ? 'ok' : ''}` }, shownStatus(a)),
       h('span', { class: 'muted' }, `${a.createdBy || ''} · ${a.createdAt || ''}`)),
     a.note && h('p', { style: { fontSize: '14px', margin: '6px 0' } }, a.note),
     reworkInfo, actions, portraitAssign, spriteBox,
@@ -330,7 +321,7 @@ async function assetDetail(ctx, a, chars) {
 }
 
 // ---------- upload ----------
-function uploadView(ctx) {
+export function uploadView(ctx) {
   const items = [];
   let mode = 'asset';
   const folderIn = h('input', { placeholder: '폴더 이름 (예: portraits, tiles_v1)', value: 'portraits' });
@@ -346,7 +337,7 @@ function uploadView(ctx) {
             h('p', { class: 'muted', style: { fontSize: '13px', margin: '0 0 8px' } }, '여러 표정이 한 장에 있는 시트, 드라이브의 원본처럼 Claude가 잘라내거나 정리해야 하는 파일이에요. 저장소의 assets/_source/폴더이름/ 에 그대로 보관되고, 요청함에 가공 요청이 자동으로 남아요.'),
             h('label', { class: 'field' }, h('span', {}, '폴더 이름'), folderIn),
             h('label', { class: 'field' }, h('span', {}, 'Claude에게 할 말'), noteIn))
-        : h('p', { class: 'muted', style: { fontSize: '13px', margin: '8px 0 0' } }, '게임에 바로 쓸 수 있는 그림이에요. 후보로 등록되고, 그림 보관함에서 승인하면 사용돼요.'));
+        : h('p', { class: 'muted', style: { fontSize: '13px', margin: '8px 0 0' } }, '게임에 쓸 그림이에요. 올리면 Claude가 확인해서 게임에 적용해요.'));
   };
   const list = h('div', { class: 'upload-list' });
   const btn = h('button', { class: 'btn primary', disabled: true }, '올리기');
@@ -405,7 +396,7 @@ function uploadView(ctx) {
         status.textContent = '';
         toast(`${saved.length}개를 ${dir}/ 에 올리고 요청함에 가공 요청을 남겼어요. Claude에게 "요청함 처리해줘"라고 말해 주세요.`);
         ctx.refreshBadges();
-        ctx.go('#/character/requests');
+        ctx.go('#/requests');
       } catch (e) { toast(e.message, true); btn.disabled = false; status.textContent = ''; }
       return;
     }
@@ -414,9 +405,9 @@ function uploadView(ctx) {
       const added = await uploadAssets(ctx.store, items, (i, n, name) => status.textContent = `올리는 중 ${i + 1}/${n}: ${name}`);
       status.textContent = '';
       const skipped = total - added.length;
-      toast(`${added.length}장을 후보로 올렸어요.${skipped ? ` 이미 있는 그림 ${skipped}장은 건너뛰었어요.` : ''}`);
+      toast(`${added.length}장을 올렸어요. Claude가 확인해서 게임에 적용하거나 보관해요.${skipped ? ` 이미 있는 그림 ${skipped}장은 건너뛰었어요.` : ''}`);
       ctx.refreshBadges();
-      ctx.go('#/character/library/후보');
+      ctx.go('#/art/list/보관');
     } catch (e) { toast(e.message, true); btn.disabled = false; status.textContent = ''; }
   };
 

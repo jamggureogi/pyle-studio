@@ -99,7 +99,7 @@ function card(ctx, t, reg) {
     t.status === '완료' && h('div', { class: 'row', style: { marginTop: '10px' } },
       h('button', { class: 'btn primary', onclick: () => setStatus('확인됨') }, '✔ 확인했어요'),
       h('button', { class: 'btn', onclick: again }, '↺ 다시 요청'),
-      h('a', { href: '#/character/library/후보', class: 'small-link' }, '그림 보관함에서 승인하기 →')),
+      h('a', { href: '#/art', class: 'small-link' }, '🗂 그림 메뉴에서 보기 →')),
     t.status === '확인됨' && h('div', { class: 'row', style: { marginTop: '10px' } }, h('button', { class: 'btn small', onclick: again }, '↺ 다시 요청')));
   return el;
 }

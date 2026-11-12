@@ -436,3 +436,4 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .wp-cmd{font-size:12px;color:#5a6b80}
 .wp-actions{margin-top:12px;display:flex;flex-direction:column;gap:6px}
 .wp-feedback{margin:8px 0;padding:8px 10px;background:#f3f6f1;border-radius:8px;font-size:14px}
+.req-pics{margin-top:6px;grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}

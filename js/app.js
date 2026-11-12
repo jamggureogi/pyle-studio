@@ -12,6 +12,7 @@ import * as review from './rooms/review.js';
 import * as codex from './rooms/codex.js';
 import * as uiroom from './rooms/ui.js';
 import * as writer from './rooms/writer.js';
+import * as art from './rooms/art.js';
 
 export const ROOMS = [
   { id: 'home', name: '홈', ico: '🏠', mod: home },
@@ -20,6 +21,7 @@ export const ROOMS = [
   { id: 'scenario', name: '시나리오', ico: '📜', mod: scenario },
   { id: 'system', name: '시스템', ico: '⚔️', mod: system },
   { id: 'character', name: '캐릭터', ico: '🧑', mod: character },
+  { id: 'art', name: '그림', ico: '🗂', mod: art },
   { id: 'story', name: '스토리', ico: '🎬', mod: story },
   { id: 'writer', name: '작가 제안', ico: '✍️', mod: writer },
   { id: 'map', name: '맵', ico: '🗺️', mod: maproom },
