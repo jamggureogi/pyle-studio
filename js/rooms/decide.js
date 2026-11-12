@@ -1,7 +1,7 @@
 // Decisions room: Claude's proposals as clickable choices, with a comment box per item.
 import { h, toast, fmtDate, fill } from '../ui.js';
 import { renderMarkdown } from '../md.js';
-import { imageStrip } from '../assets.js';
+import { imageStrip, thumb, viewImage } from '../assets.js';
 
 const FILE = 'data/decisions.json';
 const inline = t => renderMarkdown(t || '').replace(/^<p>|<\/p>$/g, '');
@@ -49,6 +49,8 @@ function card(ctx, d, tab) {
         },
       },
         h('span', { class: `mark ${d.multi ? 'box' : 'radio'}` }, on ? (d.multi ? '✓' : '●') : ''),
+        // 보기마다 그림 (일러스트 고르기 등): 그림을 누르면 크게, 나머지를 누르면 선택
+        o.image && h('span', { class: 'opt-img', title: '눌러서 크게 보기', onclick: e => { e.stopPropagation(); viewImage(ctx.store, o.image, `${o.key}. ${o.label}`); } }, thumb(ctx.store, o.image)),
         h('span', { class: 'opt-body' },
           h('span', { class: 'opt-title' }, d.multi || /^[A-Z]$/.test(o.key) ? `${o.key}. ` : `${o.key} `, o.label, o.recommended && h('span', { class: 'rec-badge' }, '⭐ 추천')),
           o.desc && h('span', { class: 'opt-desc', html: inline(o.desc) })));
@@ -84,7 +86,7 @@ function card(ctx, d, tab) {
       d.context && h('p', { class: 'ctx', html: inline(d.context) }),
       imageStrip(ctx.store, d.images, d.title),
       d.link && h('a', { href: d.link, class: 'small-link' }, '관련 화면 열기 →'),
-      h('div', { class: 'opts' }, optEls),
+      h('div', { class: `opts ${d.options.some(o => o.image) ? 'with-img' : ''}` }, optEls),
       h('label', { class: 'field', style: { marginTop: '10px' } }, comment),
       decided && d.result && h('div', { class: 'resp' }, h('b', {}, '✅ 반영: '), d.result, d.decidedAt && h('span', { class: 'muted' }, ` · ${fmtDate(d.decidedAt)}`)),
       !decided && h('div', { class: 'row' },
