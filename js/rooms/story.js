@@ -17,7 +17,7 @@ const OPS = {
   title_motion: '타이틀 연출', flash: '화면 번쩍임', shake: '화면 흔들림',
   // 필드 위 인물 연출 (RV-076): id=player(파일)·맵 인물·세운 인물, 자리=[x,y] 칸 또는 인물 id
   actor_show: '인물 세우기', actor_move: '인물 걷기', actor_face: '인물 방향', actor_hide: '인물 치우기', prop_rustle: '풀숲 흔들기',
-  open_shop: '상점 열기', give_money: '돈 주기',
+  open_shop: '상점 열기', give_money: '돈 주기', go_map: '맵 옮기기',
 };
 const REPEAT = { none: '전체 대화를 다시 (기본)', tail: '끝부분만 반복 (긴 대화용)', separate: '다시 말 걸면 따로 쓴 대사' };
 
