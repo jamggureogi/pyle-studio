@@ -1,5 +1,5 @@
 // Codex room: Claude's image work orders for Codex, Codex's completion reports, and the user's check.
-import { h, toast, fmtDate, fill, modal } from '../ui.js';
+import { h, toast, fmtDate, fill, modal, paged } from '../ui.js';
 import { loadRegistry, KINDS } from '../assets.js';
 
 const FILE = 'data/codex_tasks.json';
@@ -22,7 +22,7 @@ export async function render(ctx, rest) {
     all: tasks,
   };
   const list = h('div', {});
-  for (const t of groups[tab]) list.append(card(ctx, t, reg));
+  if (groups[tab].length) list.append(paged(groups[tab], t => card(ctx, t, reg), { key: 'codex-' + tab, size: 10 }));
   if (!groups[tab].length) list.append(h('div', { class: 'card empty' }, { open: 'Codex에게 맡길 작업이 없어요.', done: '확인할 결과가 없어요.', checked: '확인을 마친 작업이 없어요.', hold: '보류 중인 작업이 없어요.', all: '작업이 없어요.' }[tab]));
   return h('div', { class: 'page' },
     h('h1', {}, '🤝 코덱스'),

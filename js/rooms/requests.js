@@ -1,5 +1,5 @@
 // Request box: the user leaves requests per room; Claude reads data/requests.json and answers.
-import { h, toast, fmtDate, confirmBox, loading, errorBox } from '../ui.js';
+import { h, toast, fmtDate, confirmBox, loading, errorBox, paged } from '../ui.js';
 import { ROOMS, roomName } from '../app.js';
 import { fileToB64, imageStrip } from '../assets.js';
 
@@ -150,7 +150,7 @@ export function requestPanel(ctx, room) {
           tab('done', '끝남', mine.filter(r => ['완료', '보류'].includes(r.status)).length),
           tab('all', '전체', mine.length)),
         filter === 'draft' && drafts.length > 0 && h('p', { class: 'muted', style: { fontSize: '13px', margin: '4px 0 8px' } }, '감독 에이전트가 "요청이 잘 반영되지 않았다"고 판단했거나 팀에게 맡기면 좋겠다고 써 둔 초안이에요. 읽어 보고 [요청 남기기]를 누르면 팀에게 가요. 고치거나 지워도 돼요.'),
-        shown.length ? h('ul', { class: 'list' }, shown.map(item)) : h('div', { class: 'empty' }, filter === 'draft' ? '임시저장된 초안이 없어요.' : '요청이 없어요.'),
+        shown.length ? paged(shown, item, { key: 'req-' + (room || 'all') + '-' + filter, size: 15, tag: 'ul', cls: 'list' }) : h('div', { class: 'empty' }, filter === 'draft' ? '임시저장된 초안이 없어요.' : '요청이 없어요.'),
       ));
   }
 

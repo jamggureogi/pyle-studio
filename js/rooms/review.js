@@ -1,5 +1,5 @@
 // Review room: images Claude wants the user to look at, with feedback per image.
-import { h, toast, fmtDate, fill } from '../ui.js';
+import { h, toast, fmtDate, fill, paged } from '../ui.js';
 
 const FILE = 'data/review.json';
 
@@ -21,7 +21,7 @@ export async function render(ctx, rest) {
   const list = h('div', { class: 'review-list' });
   const shown = groups[tab];
   if (!shown.length) list.append(h('div', { class: 'card empty' }, { open: '지금 확인할 그림이 없어요.', sent: '보낸 피드백이 없어요.', done: '반영된 항목이 없어요.', old: '지난 내용이 없어요.' }[tab]));
-  for (const it of shown) list.append(card(ctx, it, tab));
+  if (shown.length) list.append(paged(shown, it => card(ctx, it, tab), { key: 'review-' + tab, size: 8 }));
   return h('div', { class: 'page' },
     h('h1', {}, '🖼 확인'),
     h('p', { class: 'sub' }, 'Claude가 작업 결과를 그림으로 보여드리는 곳이에요. 그림을 누르면 크게 보여요. 그림마다 피드백을 남기고 제출하면 Claude가 다음 작업 때 반영해요.'),

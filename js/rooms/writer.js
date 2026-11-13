@@ -1,5 +1,5 @@
 // Writer room: the story writer agent's proposals. Approve a scene to move it into the real story line.
-import { h, toast, confirmBox } from '../ui.js';
+import { h, toast, confirmBox, paged } from '../ui.js';
 import { thumb, viewImage } from '../assets.js';
 import { renderMarkdown } from '../md.js';
 
@@ -22,7 +22,7 @@ export async function render(ctx, rest) {
     h('div', { class: 'tabs' }, TABS.map(([id, label, f]) => h('a', { href: `#/writer/${id}`, class: tab === id ? 'on' : '' }, `${label} (${all.filter(f).length})`))));
   const shown = all.filter(TABS.find(t => t[0] === tab)[2]);
   if (!shown.length) page.append(h('div', { class: 'card empty' }, tab === 'open' ? '아직 새 제안이 없어요. 작가가 곧 올릴 거예요.' : '해당하는 제안이 없어요.'));
-  for (const p of shown) page.append(card(ctx, p, chars));
+  if (shown.length) page.append(paged(shown, p => card(ctx, p, chars), { key: 'writer-' + tab, size: 5 }));
   return page;
 }
 

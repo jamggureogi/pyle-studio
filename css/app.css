@@ -449,3 +449,15 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .room-notice{border-left:4px solid #e3b341;background:#fffaf0;margin:8px 0 12px}
 .room-notice ul{margin:6px 0 0 18px;padding:0}
 .room-notice li{margin:3px 0;font-size:14px}
+
+/* 목록 페이지 나누기 (11/13) */
+.pager { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0; }
+.pager .btn.small { min-width: 34px; }
+.pager-info { margin-left: auto; font-size: 12px; }
+/* 마우스를 올리면 크게 (스토리 룸 일러스트 교체, 11/13) */
+.hover-zoom { position: fixed; z-index: 10000; pointer-events: none; display: none; background: #111; border: 2px solid #c9a75a; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,.55); overflow: hidden; }
+.hover-zoom.on { display: block; }
+.hover-zoom img { display: block; width: 100%; height: auto; }
+.thumb-card { position: relative; }
+.thumb-card .zoom-btn { position: absolute; top: 6px; right: 6px; border: 0; border-radius: 50%; width: 32px; height: 32px; background: rgba(20,24,40,.75); color: #fff; font-size: 15px; cursor: pointer; line-height: 32px; padding: 0; }
+.thumb-card .zoom-btn:hover { background: rgba(201,167,90,.9); }

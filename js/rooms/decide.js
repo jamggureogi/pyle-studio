@@ -1,5 +1,5 @@
 // Decisions room: Claude's proposals as clickable choices, with a comment box per item.
-import { h, toast, fmtDate, fill } from '../ui.js';
+import { h, toast, fmtDate, fill, paged } from '../ui.js';
 import { renderMarkdown } from '../md.js';
 import { imageStrip, thumb, viewImage } from '../assets.js';
 
@@ -26,7 +26,7 @@ export async function render(ctx, rest) {
   const emptyText = { open: '지금은 결정할 것이 없어요. 👍', sent: '제출했지만 아직 반영되지 않은 항목이 없어요.', done: '아직 결정된 항목이 없어요.' }[tab];
   if (tab === 'sent' && sent.length) list.append(h('p', { class: 'muted', style: { fontSize: '13px' } }, 'Claude에게 "결정 반영해줘"라고 말하면 반영하고 "결정됨"으로 옮겨요. 반영 전에는 "고치기"로 답을 바꿀 수 있어요.'));
   if (!shown.length) list.append(h('div', { class: 'card empty' }, emptyText));
-  for (const d of shown) list.append(card(ctx, d, tab));
+  if (shown.length) list.append(paged(shown, d => card(ctx, d, tab), { key: 'decide-' + tab, size: 8 }));
   return page;
 }
 

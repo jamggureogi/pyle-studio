@@ -1,5 +1,5 @@
 // Story room: chapters → scenes → lines. Edit speakers, expressions, order, and preview the dialogue box.
-import { h, toast, loading, errorBox, confirmBox, modal, closeModal } from '../ui.js';
+import { h, toast, loading, errorBox, confirmBox, modal, closeModal, hoverZoom, hideHoverZoom } from '../ui.js';
 import { requestPanel, newId } from './requests.js';
 import { makeDraggable, moveInArray } from '../drag.js';
 import { loadRegistry, updateRegistry, viewImage } from '../assets.js';
@@ -615,11 +615,14 @@ async function linkCandidate(ctx, key, redraw) {
   const grid = h('div', { class: 'thumb-grid' });
   const choice = await new Promise(resolve => {
     for (const a of events) {
-      const card = h('div', { class: 'thumb-card', onclick: () => { resolve(a.file); closeModal(); } }, h('div', { class: 'thumb' }, '…'), h('div', { class: 'cap' }, a.id));
-      S.store.blobUrl(a.file).then(u => card.firstChild.replaceChildren(h('img', { src: u })));
+      let url = null;
+      const card = h('div', { class: 'thumb-card', onclick: () => { hideHoverZoom(); resolve(a.file); closeModal(); } }, h('div', { class: 'thumb' }, '…'), h('div', { class: 'cap' }, a.id),
+        h('button', { class: 'zoom-btn', title: '크게 보기', onclick: e => { e.stopPropagation(); hideHoverZoom(); viewImage(S.store, a.file, a.id); } }, '🔍'));
+      S.store.blobUrl(a.file).then(u => { url = u; card.firstChild.replaceChildren(h('img', { src: u })); });
+      hoverZoom(card, () => url);
       grid.append(card);
     }
-    modal('후보로 연결할 그림 고르기', grid, [{ label: '취소', value: null }]).then(() => resolve(null));
+    modal('후보로 연결할 그림 고르기', grid, [{ label: '취소', value: null }]).then(() => { hideHoverZoom(); resolve(null); });
   });
   if (!choice) return;
   const ill = S.story.illustrations[key];
@@ -636,12 +639,15 @@ async function swapIllustration(ctx, key, files, pick) {
   const choice = await new Promise(resolve => {
     if (!files.length) grid.append(h('div', { class: 'empty' }, '이 장면용 그림이 아직 없어요. 아래 "원하는 그림 요청하기"로 요청하거나 [다른 그림 연결]을 눌러 주세요.'));
     for (const f of files) {
-      const card = h('div', { class: `thumb-card ${f === ill.file ? 'on' : ''}`, onclick: () => { resolve(f); closeModal(); } }, h('div', { class: 'thumb' }, '…'),
-        h('div', { class: 'cap' }, f === ill.file ? '✓ 지금 쓰는 그림' : f.split('/').slice(-2).join('/')));
-      S.store.blobUrl(f).then(u => card.firstChild.replaceChildren(h('img', { src: u })));
+      let url = null;
+      const card = h('div', { class: `thumb-card ${f === ill.file ? 'on' : ''}`, onclick: () => { hideHoverZoom(); resolve(f); closeModal(); } }, h('div', { class: 'thumb' }, '…'),
+        h('div', { class: 'cap' }, f === ill.file ? '✓ 지금 쓰는 그림' : f.split('/').slice(-2).join('/')),
+        h('button', { class: 'zoom-btn', title: '크게 보기', onclick: e => { e.stopPropagation(); hideHoverZoom(); viewImage(S.store, f, f.split('/').pop()); } }, '🔍'));
+      S.store.blobUrl(f).then(u => { url = u; card.firstChild.replaceChildren(h('img', { src: u })); });
+      hoverZoom(card, () => url);
       grid.append(card);
     }
-    modal(`「${ill.title || key}」 그림 교체 — 고르면 바로 바뀌어요`, grid, [{ label: '다른 그림 연결', value: 'link' }, { label: '닫기', value: null }]).then(v => resolve(v));
+    modal(`「${ill.title || key}」 그림 교체 — 마우스를 올리면 크게 보이고, 고르면 바로 바뀌어요`, grid, [{ label: '다른 그림 연결', value: 'link' }, { label: '닫기', value: null }]).then(v => { hideHoverZoom(); resolve(v); });
   });
   if (choice === 'link') return linkCandidate(ctx, key, () => window.dispatchEvent(new HashChangeEvent('hashchange')));
   if (choice) pick(choice);

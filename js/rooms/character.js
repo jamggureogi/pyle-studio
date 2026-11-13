@@ -1,5 +1,5 @@
 // Character room: people (portraits by expression), the image library with approval, and bulk upload.
-import { h, toast, modal, confirmBox, closeModal } from '../ui.js';
+import { h, toast, modal, confirmBox, closeModal, paged } from '../ui.js';
 import { portraitLayer, frameFor, loadDialogueLayout, layoutStage } from '../portrait.js';
 import { requestPanel } from './requests.js';
 import { motionCard, motionOverview, appliedPreview, SPRITES } from '../motion.js';
@@ -232,10 +232,10 @@ export async function libraryView(ctx, rest) {
 }
 
 function assetGrid(ctx, list, chars) {
-  return h('div', { class: 'thumb-grid big' }, list.map(a => h('div', { class: 'thumb-card', onclick: () => assetDetail(ctx, a, chars) },
+  return paged(list, a => h('div', { class: 'thumb-card', onclick: () => assetDetail(ctx, a, chars) },
     thumb(ctx.store, a.file),
     h('div', { class: 'cap' }, h('span', { class: `badge ${applied(a) ? 'ok' : ''}` }, shownStatus(a)), a.rework && ['요청', '요청됨'].includes(a.rework.status) && h('span', { class: 'badge danger', title: a.rework.comment }, '↺ 재작업'), ' ', a.id),
-    h('div', { class: 'cap muted' }, `${KINDS[a.kind] || a.kind}${a.owner ? ' · ' + (chars.characters.find(c => c.id === a.owner)?.name || a.owner) : ''} · ${a.createdBy || ''}`))));
+    h('div', { class: 'cap muted' }, `${KINDS[a.kind] || a.kind}${a.owner ? ' · ' + (chars.characters.find(c => c.id === a.owner)?.name || a.owner) : ''} · ${a.createdBy || ''}`)), { key: 'assets', size: 48, cls: 'thumb-grid big' });
 }
 
 async function assetDetail(ctx, a, chars) {
