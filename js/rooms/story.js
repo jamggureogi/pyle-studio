@@ -15,6 +15,9 @@ const OPS = {
   set_flag: '플래그 설정', give_item: '아이템 지급', remove_item: '아이템 회수', show_cg: '일러스트 표시', hide_cg: '일러스트 숨김',
   fade_out: '화면 암전', fade_in: '암전 해제', camera_pan: '카메라 이동', start_battle: '전투 시작', add_party: '동료 합류', play_se: '효과음', play_bgm: '배경음악', wait: '잠시 대기',
   title_motion: '타이틀 연출', flash: '화면 번쩍임', shake: '화면 흔들림',
+  // 필드 위 인물 연출 (RV-076): id=player(파일)·맵 인물·세운 인물, 자리=[x,y] 칸 또는 인물 id
+  actor_show: '인물 세우기', actor_move: '인물 걷기', actor_face: '인물 방향', actor_hide: '인물 치우기', prop_rustle: '풀숲 흔들기',
+  open_shop: '상점 열기', give_money: '돈 주기',
 };
 const REPEAT = { none: '전체 대화를 다시 (기본)', tail: '끝부분만 반복 (긴 대화용)', separate: '다시 말 걸면 따로 쓴 대사' };
 
@@ -383,14 +386,24 @@ function stepRow(ctx, s, steps, st, i, redraw, change) {
     const opSel = h('select', {}, Object.entries(OPS).map(([v, l]) => h('option', { value: v, selected: v === st.op }, l)));
     if (!OPS[st.op]) opSel.append(h('option', { value: st.op, selected: true }, st.op));
     opSel.onchange = () => { st.op = opSel.value; change(); };
-    const args = h('input', { value: Object.entries(st.args || {}).map(([k, v]) => `${k}=${v}`).join(', '), placeholder: '예) key=dinner' });
+    // 칸 자리처럼 [x, y] 값은 대괄호째 적는다 (예: to=[16, 29], speed=2.4)
+    const fmt = v => Array.isArray(v) ? `[${v.join(', ')}]` : v;
+    const args = h('input', { value: Object.entries(st.args || {}).map(([k, v]) => `${k}=${fmt(v)}`).join(', '), placeholder: '예) key=dinner · to=[16, 29]' });
     args.oninput = () => {
       st.args = {};
-      for (const part of args.value.split(',')) {
+      const parts = []; let cur = '', depth = 0;
+      for (const ch of args.value) {
+        if (ch === '[') depth++; else if (ch === ']') depth = Math.max(0, depth - 1);
+        if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; } else cur += ch;
+      }
+      parts.push(cur);
+      for (const part of parts) {
         const [k, ...v] = part.split('=');
         if (!k.trim()) continue;
         let val = v.join('=').trim();
-        if (val === 'true') val = true; else if (val === 'false') val = false; else if (val !== '' && !isNaN(val)) val = Number(val);
+        if (val === 'true') val = true; else if (val === 'false') val = false;
+        else if (val.startsWith('[') && val.endsWith(']')) val = val.slice(1, -1).split(',').map(x => x.trim()).filter(Boolean).map(x => isNaN(x) ? x : Number(x));
+        else if (val !== '' && !isNaN(val)) val = Number(val);
         st.args[k.trim()] = val;
       }
       change();
