@@ -123,6 +123,8 @@ const pct = v => `${Math.round(v * 100)}%`;
 //   portraitBox    { top }             top of the portrait box (fraction of the screen height);
 //                                      its bottom is always the dialogue box bottom
 //   textPad        { top, portraitSide, edgeSide }   padding of the text area (px on 1280×720)
+//   overCg         { portrait, boxAlpha }   only while an illustration is on screen (D-079):
+//                  show the portrait or not, and how solid the box background is (1 = as usual)
 // Per-portrait scale / dx / dy (data/characters.json → portraitFrame(s)) still apply in both fits;
 // "모든 초상화를 박스에 채우기" turns fill on and resets them all to scale 1, dx 0, dy 0.
 
@@ -192,8 +194,17 @@ function dialogueTab(ctx) {
   }
 
   // re-place everything without rebuilding the stage (keeps a drag going)
+  // 일러스트 위 모습 미리 보기 (D-079): 배경 일러스트를 골랐고 [일러스트 장면처럼 보기]가 켜져 있으면 게임과 같게
+  function cgLook() {
+    const on = !!(st.cgLook && U.story.illustrations?.[st.bg]?.file);
+    stage.classList.toggle('cglook', on);
+    stage.classList.toggle('cg-noportrait', on && !d.overCg.portrait);
+    stage.style.setProperty('--cg-alpha', String(on ? d.overCg.boxAlpha : 1));
+  }
+
   function update() {
     applyDialogue(d);
+    cgLook();
     if (live) live.portraitFrames[st.emo] = working();
     if (layer) layer._fit(); else layoutStage(stage);
     placeHandles();
@@ -208,13 +219,15 @@ function dialogueTab(ctx) {
     if (bgFile) ctx.store.blobUrl(bgFile).then(u => { scene.style.backgroundImage = `url(${u})`; });
     const name = h('div', { class: 'pv-name ui-drag', title: '끌어서 이름 위치 옮기기' }, c?.displayName || c?.name || '');
     const text = h('div', { class: 'pv-text ui-drag', title: '끌어서 본문 위치 옮기기' }, st.text);
-    const box = h('div', { class: `pv-box ${c?.portraits?.[st.emo] ? '' : 'noportrait'}` }, name, text);
+    const hideP = !!(st.cgLook && bgFile && !d.overCg.portrait);   // 일러스트 위 모습 (D-079): 게임처럼 초상화 없이
+    const box = h('div', { class: `pv-box ${c?.portraits?.[st.emo] && !hideP ? '' : 'noportrait'}` }, name, text);
     stage.replaceChildren(scene, box);
+    cgLook();
     const k = () => stage.clientWidth / REF_W;
     dragOn(name, (dx, dy) => { d.name.x += dx / k(); d.name.y += dy / k(); layoutStage(stage); });
     dragOn(text, (dx, dy) => { d.text.x += dx / k(); d.text.y += dy / k(); layoutStage(stage); });
     layer = null; grab = null; live = null;
-    const file = c?.portraits?.[st.emo] || c?.portraits?.normal;
+    const file = hideP ? null : (c?.portraits?.[st.emo] || c?.portraits?.normal);
     const mine = ek();
     if (file) {
       const u = await ctx.store.blobUrl(file);
@@ -350,6 +363,13 @@ function dialogueTab(ctx) {
           h('button', { class: 'btn small primary', onclick: () => savePortrait(false) }, '이 표정만 저장'),
           h('button', { class: 'btn small', onclick: () => savePortrait(true) }, '모든 표정에 같은 값'),
           h('button', { class: 'btn small', onclick: () => { delete U.frameEdits[ek()]; update(); } }, '되돌리기'))),
+      h('div', { class: 'card' },
+        h('h4', { style: { marginTop: 0 } }, '일러스트 위 대화창 (모든 일러스트 장면 공통)'),
+        h('p', { class: 'muted small' }, '일러스트가 떠 있을 때만 쓰여요 (결정 D-079). 그림에 이미 인물이 나오니 초상화를 숨기고, 대화창 바탕을 비치게 해서 그림 아래쪽도 보이게 해요.'),
+        check('일러스트 위에서도 초상화 보이기', d.overCg.portrait, v => { d.overCg.portrait = v; if (st.cgLook) drawStage(); }),
+        slider('대화창 바탕 진하기', d.overCg.boxAlpha, 0.3, 1, 0.01, v => { d.overCg.boxAlpha = v; update(); }, pct),
+        check('미리 보기를 일러스트 장면처럼 (위 [배경]에서 일러스트를 고르세요)', !!st.cgLook, v => { st.cgLook = v; drawStage(); }),
+        h('div', { class: 'row' }, saveBtn())),
       h('div', { class: 'card' },
         h('h4', { style: { marginTop: 0 } }, '글자 · 글 영역 여백 (모든 대화 공통)'),
         h('p', { class: 'muted small' }, '이름과 본문은 화면에서 직접 끌어서 옮길 수 있어요. 여백은 글 영역 안쪽에서 글자를 얼마나 띄울지예요.'),

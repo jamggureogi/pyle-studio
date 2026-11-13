@@ -461,3 +461,8 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .thumb-card { position: relative; }
 .thumb-card .zoom-btn { position: absolute; top: 6px; right: 6px; border: 0; border-radius: 50%; width: 32px; height: 32px; background: rgba(20,24,40,.75); color: #fff; font-size: 15px; cursor: pointer; line-height: 32px; padding: 0; }
 .thumb-card .zoom-btn:hover { background: rgba(201,167,90,.9); }
+
+/* 일러스트 위 대화창 미리 보기 (D-079) */
+.cglook .pv-frame{opacity:var(--cg-alpha,1)}
+.cglook .pv-box:not(.framed){background:rgba(20,26,22,calc(.88 * var(--cg-alpha,1)))}
+.cg-noportrait .pv-pclip,.cg-noportrait .ui-grab{display:none}

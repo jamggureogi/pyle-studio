@@ -33,6 +33,8 @@ export const DEFAULT_DIALOGUE = {
   portraitBox: { top: 0.47 },   // top of the portrait box (fraction of screen height). Its bottom is the dialogue box bottom.
   // text padding in 1280×720 px: top, the gap on the portrait/divider side, the gap on the frame-edge side
   textPad: { top: 20, portraitSide: 23, edgeSide: 48 },
+  // 일러스트가 떠 있을 때만 (결정 D-079): portrait = 초상화 보이기, boxAlpha = 대화창 바탕 진하기 (1 = 일러스트가 없을 때와 같음)
+  overCg: { portrait: false, boxAlpha: 0.72 },
 };
 export let DIALOGUE = structuredClone(DEFAULT_DIALOGUE);
 
