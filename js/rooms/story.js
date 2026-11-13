@@ -411,7 +411,7 @@ function addButtons(steps, redraw, change) {
     h('button', { class: 'btn small', onclick: () => add({ id: uid('D'), kind: 'direction', text: '' }) }, '+ 연출'),
     h('button', { class: 'btn small', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'set_flag', args: {} }) }, '+ 명령'),
     h('button', { class: 'btn small', title: '이벤트 일러스트를 띄워요. 추가한 뒤 어떤 그림인지 고르세요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'show_cg', args: { key: '', duration: 0.9 } }) }, '+ 🖼 일러스트'),
-    h('button', { class: 'btn small', title: '띄워 둔 일러스트를 닫아요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'hide_cg', args: { duration: 0.6 } }) }, '+ 일러스트 닫기'));
+    h('button', { class: 'btn small', title: '띄워 둔 일러스트를 닫아요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'hide_cg', args: { duration: 0.9 } }) }, '+ 일러스트 닫기'));
 }
 
 const CLIP = 'pyle.story.clipboard';
@@ -543,6 +543,10 @@ function cgPicker(ctx, st, change, redraw) {
   };
   const dur = h('input', { type: 'number', step: 0.1, min: 0, value: st.args.duration ?? 0.9, class: 'dur', title: '나타나는 데 걸리는 시간(초)' });
   dur.oninput = () => { st.args.duration = Number(dur.value); change(); };
+  // 들어가는 방식 (요청 req_mwejpz1oroqf): 스르륵(앞 그림이 있으면 겹쳐 바뀜) · 암전 거쳐 · 화이트아웃 거쳐 · 바로
+  const TR = { fade: '스르륵', black: '암전 거쳐', white: '화이트아웃 거쳐', cut: '바로' };
+  const trSel = h('select', { title: '일러스트가 들어오는 방식' }, Object.entries(TR).map(([v, l]) => h('option', { value: v, selected: v === (st.args.transition || 'fade') }, l)));
+  trSel.onchange = () => { if (trSel.value === 'fade') delete st.args.transition; else st.args.transition = trSel.value; change(); };
 
   const key = st.args.key;
   const strip = h('div', { class: 'cg-strip' });
@@ -572,7 +576,7 @@ function cgPicker(ctx, st, change, redraw) {
       h('span', { class: 'muted cg-note' }, ill.file ? '✓ 쓰는 중' : all.length ? '[교체]를 눌러 골라 주세요' : '이 장면용 그림이 아직 없어요'));
   }
   const hint = !key && h('p', { class: 'muted cg-hint' }, '아직 일러스트를 고르지 않았어요. 목록에서 고르거나, 마음에 드는 게 없으면 "+ 새 일러스트 칸 만들기"로 원하는 그림을 요청하세요.');
-  return h('div', { class: 'cg-picker' }, h('div', { class: 'row' }, keySel, h('span', { class: 'muted', style: { fontSize: '12px' } }, '나타나는 시간'), dur, h('span', { class: 'muted', style: { fontSize: '12px' } }, '초')), strip, hint, key && ills[key] && requestBox(ctx, key, redraw));
+  return h('div', { class: 'cg-picker' }, h('div', { class: 'row' }, keySel, trSel, h('span', { class: 'muted', style: { fontSize: '12px' } }, '나타나는 시간'), dur, h('span', { class: 'muted', style: { fontSize: '12px' } }, '초')), strip, hint, key && ills[key] && requestBox(ctx, key, redraw));
 }
 
 // 일러스트 칸 id: 사용자는 신경 쓰지 않아도 되게 자동으로 짓는다.
