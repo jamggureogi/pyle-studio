@@ -82,14 +82,16 @@ async function save(ctx) {
 }
 
 export async function render(ctx, rest) {
-  const tab = rest[0] === 'requests' ? 'requests' : 'edit';
+  const tab = rest[0] === 'requests' ? 'requests' : rest[0] === 'changes' ? 'changes' : 'edit';
   const page = h('div', { class: 'page wide' },
     h('h1', {}, '🎬 스토리룸'),
     h('p', { class: 'sub' }, '장면 순서, 대사, 화자와 표정, 연출을 편집해요. 저장하면 Claude와 게임이 같은 내용을 봐요.'),
     h('div', { class: 'tabs' },
       h('a', { href: '#/story/edit', class: tab === 'edit' ? 'on' : '' }, '장면 편집'),
+      h('a', { href: '#/story/changes', class: tab === 'changes' ? 'on' : '' }, '고친 대사 모아 보기'),
       h('a', { href: '#/story/requests', class: tab === 'requests' ? 'on' : '' }, '요청함')));
   if (tab === 'requests') { page.append(requestPanel(ctx, 'story')); return page; }
+  if (tab === 'changes') { page.append(await changesPanel(ctx)); return page; }
   if (!S || S.store !== ctx.store || S.file !== FILE) await load(ctx);
   S.file = FILE;
   const sel = rest[1] && S.story.scenes[rest[1]] ? rest[1] : S.story.flow[0]?.id;
@@ -716,4 +718,61 @@ async function preview(s) {
   };
   stage.addEventListener('click', e => { if (!e.target.closest('button')) next(); });
   next();
+}
+
+
+// ---------- 고친 대사 모아 보기 (사용자 요청 「스토리 룸 대화 관련」) ----------
+// data/story_changes.json (pyle_claude tools/story_changes.py 가 git 기록에서 만든다): 고치기 전 → 지금 문장, 장면별
+async function changesPanel(ctx) {
+  const box = h('div', {});
+  const [res, ch] = await Promise.all([ctx.store.getJSON('data/story_changes.json', null), ctx.store.getJSON(CHARS, { characters: [] })]);
+  const data = res && res.data;
+  if (!data || !Array.isArray(data.items)) {
+    box.append(h('p', { class: 'muted' }, '아직 모아 둔 자료가 없어요. (Claude가 tools/story_changes.py 를 돌리면 생겨요)'));
+    return box;
+  }
+  const names = {};
+  for (const c of (ch.data?.characters || [])) names[c.id] = c.name || c.id;
+  const who = h('select', {}, ['전체', 'Claude', '작가', '감독', '사용자'].map(w => h('option', { value: w }, w === '전체' ? '누가 고쳤든 전체' : w + '가 고친 것')));
+  const kind = h('select', {}, [['edit', '고친 대사만'], ['all', '고친 대사 + 새 대사'], ['new', '새로 쓴 대사만']].map(([v, t]) => h('option', { value: v }, t)));
+  const fileSel = h('select', {}, [['all', '모든 장'], ['data/story/prologue.json', '프롤로그'], ['data/story/chapter1.json', '1장']].map(([v, t]) => h('option', { value: v }, t)));
+  const q = h('input', { class: 'search', placeholder: '대사 검색' });
+  const list = h('div', {});
+  const draw = () => {
+    list.innerHTML = '';
+    const term = q.value.trim();
+    let items = data.items.filter(e =>
+      (fileSel.value === 'all' || e.file === fileSel.value) &&
+      (who.value === '전체' || e.history.some(x => x.who === who.value)) &&
+      (kind.value === 'all' || (kind.value === 'new' ? e.original == null : e.original != null)) &&
+      (!term || (e.text || '').includes(term) || (e.original || '').includes(term)));
+    list.append(h('p', { class: 'muted' }, `${items.length}줄 · 최근 ${data.days}일 동안 바뀐 대사 (지금 대본 기준)`));
+    let curScene = null;
+    for (const e of items) {
+      if (e.scene !== curScene) {
+        curScene = e.scene;
+        const go = h('a', { href: `#/story/edit/${e.scene}`, onclick: () => { localStorage.setItem('pyle.storyFile', e.file); FILE = e.file; S = null; } }, '장면 열기 →');
+        list.append(h('h3', { style: { marginTop: '18px' } }, `${e.title || e.scene} `, h('span', { class: 'muted', style: { fontSize: '13px', fontWeight: 'normal' } }, e.scene, ' · '), go));
+      }
+      const spk = e.name || names[e.speaker] || e.speaker || '';
+      const last = e.history[e.history.length - 1] || {};
+      const row = h('div', { class: 'card', style: { padding: '10px 12px', margin: '6px 0' } },
+        h('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '4px' } },
+          `${spk} · ${e.original == null ? '새 대사' : '고친 대사'} · ${last.at || ''} ${last.who || ''}${e.history.length > 1 ? ` (${e.history.length}번 바뀜)` : ''}`),
+        e.original != null && h('div', { style: { textDecoration: 'line-through', color: '#9a8f80', marginBottom: '4px' } }, e.original),
+        h('div', {}, e.text));
+      if (e.history.length > 1) {
+        const det = h('details', { style: { marginTop: '6px', fontSize: '12px' } }, h('summary', { class: 'muted' }, '바뀐 차례 보기'));
+        for (const x of e.history) det.append(h('div', { style: { margin: '4px 0' } }, h('b', {}, `${x.at} ${x.who}`), ' — ', h('span', { class: 'muted' }, x.msg), h('div', {}, x.before == null ? '(새로 씀)' : x.before, ' → ', x.after)));
+        row.append(det);
+      }
+      list.append(row);
+    }
+  };
+  for (const el of [who, kind, fileSel]) el.onchange = draw;
+  q.oninput = draw;
+  box.append(h('p', { class: 'sub' }, 'Claude·작가·감독이 다시 쓰거나 새로 쓴 대사를 한곳에서 봐요. 줄 그은 글이 고치기 전, 아래가 지금 대사예요. 고칠 곳은 「장면 열기」로 가서 바로 고치면 돼요.'),
+    h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } }, fileSel, who, kind, q), list);
+  draw();
+  return box;
 }
