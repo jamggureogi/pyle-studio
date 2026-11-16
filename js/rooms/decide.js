@@ -36,6 +36,7 @@ function card(ctx, d, tab) {
   let editing = d.status === '대기';
   const el = h('div', { class: `card decision ${d.status}` });
 
+  let typed = null;
   const draw = () => {
     const answered = d.status === '답변됨', decided = d.status === '결정됨';
     const optEls = d.options.map(o => {
@@ -56,7 +57,8 @@ function card(ctx, d, tab) {
           o.desc && h('span', { class: 'opt-desc', html: inline(o.desc) })));
     });
     const comment = h('textarea', { rows: 3, placeholder: '내 의견 (선택) — 보기에 원하는 게 없거나, 덧붙이고 싶은 말을 적어 주세요', disabled: !editing });
-    comment.value = prev.comment || '';
+    comment.value = typed ?? prev.comment ?? '';          // 보기를 눌러 다시 그려도 쓰던 의견이 지워지지 않게 (사용자 11/16)
+    comment.addEventListener('input', () => { typed = comment.value; });
     const submit = async () => {
       if (!chosen.size && !comment.value.trim()) return toast('보기를 고르거나 의견을 적어 주세요.', true);
       try {
@@ -69,13 +71,14 @@ function card(ctx, d, tab) {
         }, `결정 제출: ${d.id} ${d.title}`, { decisions: [] });
         Object.assign(d, { answer, status: '답변됨' });
         Object.assign(prev, answer);
+        typed = null;
         editing = false;
         toast('제출했어요. "제출됨" 탭으로 옮겼어요.');
         ctx.refreshBadges();
         if (tab === 'open') { el.classList.add('leaving'); setTimeout(() => window.dispatchEvent(new HashChangeEvent('hashchange')), 450); return; }
         el.className = 'card decision 답변됨';
         draw();
-      } catch (e) { toast(e.message, true); }
+      } catch (e) { toast(`제출하지 못했어요 (${e.message}). 고른 보기와 의견은 그대로 있어요 — 다시 눌러 주세요.`, true); }
     };
     fill(el,
       h('div', { class: 'row' },

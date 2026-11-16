@@ -25,18 +25,28 @@ export function requestPanel(ctx, room) {
     } catch (e) { wrap.replaceChildren(errorBox(e)); }
   }
 
+  // 저장에 성공하면 true. 실패하면 알림을 띄우고 false (화면·적은 글은 그대로)
   async function mutate(fn, msg) {
     try {
       const data = await ctx.store.updateJSON(FILE, d => { d.requests ||= []; fn(d.requests); return d; }, msg, { requests: [] });
       draw(data.requests);
       ctx.refreshBadges();
-    } catch (e) { toast(e.message, true); }
+      return true;
+    } catch (e) { toast(e.message, true); return false; }
   }
 
   function form() {
     const roomSel = room ? null : h('select', {}, h('option', { value: 'general' }, '일반 (게임 전반에 걸친 요청)'), ROOMS.filter(r => !['home', 'requests'].includes(r.id)).map(r => h('option', { value: r.id }, r.name)));
     const title = h('input', { placeholder: '예) 주인공 웃는 표정 초상화 새로 만들어줘' });
     const body = h('textarea', { placeholder: '자세한 내용 (선택)' });
+    // 쓰던 글은 이 기기에 계속 보관 — 저장이 실패하거나 화면을 닫아도 날아가지 않게 (사용자 11/16)
+    const DKEY = 'pyle-req-draft-' + (room || 'all');
+    try {
+      const saved = JSON.parse(localStorage.getItem(DKEY) || 'null');
+      if (saved) { title.value = saved.title || ''; body.value = saved.body || ''; if (roomSel && saved.room) roomSel.value = saved.room; }
+    } catch (e) { /* 무시 */ }
+    const keep = () => { try { localStorage.setItem(DKEY, JSON.stringify({ title: title.value, body: body.value, room: roomSel?.value })); } catch (e) { /* 무시 */ } };
+    title.addEventListener('input', keep); body.addEventListener('input', keep); roomSel?.addEventListener('change', keep);
     // 그림 첨부: 게임 화면 사진 등 (파일 고르기 또는 붙여넣기 Ctrl+V)
     let files = [];
     const picked = h('div', { class: 'thumb-grid' });
@@ -47,8 +57,14 @@ export function requestPanel(ctx, room) {
     const fileIn = h('input', { type: 'file', accept: 'image/*', multiple: true, style: { display: 'none' }, onchange: e => { addFiles(e.target.files); e.target.value = ''; } });
     const onPaste = e => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } };
     title.addEventListener('paste', onPaste); body.addEventListener('paste', onPaste);
+    let sending = false;
     const add = async () => {
+      if (sending) return;
       if (!title.value.trim()) return toast('요청 제목을 적어 주세요.', true);
+      keep();
+      sending = true;
+      sendBtn.disabled = true; sendBtn.textContent = '남기는 중…';
+      const done = () => { sending = false; sendBtn.disabled = false; sendBtn.textContent = '요청 남기기'; };
       const now = new Date().toISOString();
       const req = { id: newId(), room: room || roomSel.value, title: title.value.trim(), body: body.value.trim(), status: '대기', createdAt: now, updatedAt: now, createdBy: '사용자', response: '' };
       try {
@@ -62,11 +78,15 @@ export function requestPanel(ctx, room) {
             req.images.push({ file: path });
           }
         }
-      } catch (e) { return toast(e.message, true); }
-      await mutate(list => list.unshift(req), `요청 추가: ${req.title}`);
+      } catch (e) { done(); return toast(`그림을 올리지 못했어요 (${e.message}). 적은 글은 그대로 있어요 — 다시 눌러 주세요.`, true); }
+      try { localStorage.removeItem(DKEY); } catch (e) { /* 무시 */ }          // 성공하면 목록을 다시 그리며 빈 칸으로 — 먼저 지워 둠
+      const ok = await mutate(list => list.unshift(req), `요청 추가: ${req.title}`);
+      done();
+      if (!ok) { keep(); return toast('요청을 남기지 못했어요. 적은 글은 그대로 있어요 — 잠시 뒤 [요청 남기기]를 다시 눌러 주세요.', true); }
       title.value = ''; body.value = ''; files = []; drawPicked();
       toast('요청을 남겼어요. Claude에게 "요청함 처리해줘"라고 말하면 작업해요.');
     };
+    const sendBtn = h('button', { class: 'btn primary', onclick: add }, '요청 남기기');
     return h('div', { class: 'card' },
       h('h2', {}, '새 요청'),
       roomSel && h('label', { class: 'field' }, h('span', {}, '어느 룸에 대한 요청인가요?'), roomSel),
@@ -74,7 +94,7 @@ export function requestPanel(ctx, room) {
       h('label', { class: 'field' }, h('span', {}, '자세히'), body),
       h('div', { class: 'field' }, h('span', {}, '그림 붙이기 (선택) — 게임 화면 사진을 붙이면 어디인지 바로 알 수 있어요. 글 칸에 Ctrl+V로 붙여 넣어도 돼요.'),
         h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: () => fileIn.click() }, '📎 그림 고르기'), fileIn), picked),
-      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: add }, '요청 남기기')),
+      h('div', { class: 'row' }, sendBtn),
     );
   }
 

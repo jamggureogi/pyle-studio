@@ -27,8 +27,8 @@ function b64ToText(b64) {
 class BaseStore {
   constructor() { this.blobCache = new Map(); }
 
-  async getJSON(path, fallback = null) {
-    const f = await this.getText(path);
+  async getJSON(path, fallback = null, fresh = false) {
+    const f = await this.getText(path, fresh);
     if (!f) return { data: fallback, sha: null };
     return { data: JSON.parse(f.text), sha: f.sha };
   }
@@ -38,15 +38,19 @@ class BaseStore {
   }
 
   // Load the latest version, apply fn, save. Retries when someone else saved in between.
+  // 여러 팀(에이전트)이 같은 파일을 자주 고치고, 저장 직후엔 GitHub가 잠깐 옛 버전을 돌려줄 수 있어서
+  // 충돌이 나면 조금씩 기다렸다가(0.8·1.6·2.4…초) 최대 8번까지 다시 해요.
   async updateJSON(path, fn, message, fallback = {}) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const { data, sha } = await this.getJSON(path, structuredClone(fallback));
+    const tries = 8;
+    for (let attempt = 0; attempt < tries; attempt++) {
+      const { data, sha } = await this.getJSON(path, structuredClone(fallback), attempt > 0);
       const next = (await fn(data)) ?? data;
       try {
         await this.saveJSON(path, next, sha, message);
         return next;
       } catch (e) {
-        if (!(e instanceof ConflictError) || attempt === 2) throw e;
+        if (!(e instanceof ConflictError) || attempt === tries - 1) throw e;
+        await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
       }
     }
   }
@@ -92,14 +96,23 @@ export class GitHubStore extends BaseStore {
     return repo;
   }
 
-  async getText(path) {
-    const r = await this.api(`${this.url(path)}?ref=${this.branch}&t=${Date.now()}`);
+  // 지금 브랜치 맨 끝 커밋 (가지 이름으로 읽으면 저장 직후 잠깐 옛 내용이 올 때가 있어 커밋 번호로 읽기 위함)
+  async headSha() {
+    const r = await this.api(`/repos/${this.owner}/${this.repo}/git/ref/heads/${this.branch}?t=${Date.now()}`);
+    if (!r.ok) return this.branch;
+    const j = await r.json();
+    return j.object?.sha || this.branch;
+  }
+
+  async getText(path, fresh = false) {
+    const ref = fresh ? await this.headSha() : this.branch;
+    const r = await this.api(`${this.url(path)}?ref=${ref}&t=${Date.now()}`);
     if (r.status === 404) return null;
     if (!r.ok) throw new Error(`불러오기 실패 (${r.status}): ${path}`);
     const j = await r.json();
     if (j.content || j.size === 0) return { text: j.content ? b64ToText(j.content) : '', sha: j.sha };
     // Files over 1MB come without content; fetch the raw bytes instead.
-    const raw = await this.api(`${this.url(path)}?ref=${this.branch}`, { accept: 'application/vnd.github.raw' });
+    const raw = await this.api(`${this.url(path)}?ref=${ref}&t=${Date.now()}`, { accept: 'application/vnd.github.raw' });
     return { text: await raw.text(), sha: j.sha };
   }
 

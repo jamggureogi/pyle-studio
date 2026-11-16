@@ -42,21 +42,23 @@ function card(ctx, it, tab) {
   const closed = it.status === '반영됨' || it.status === '지난 내용';
   const imgBox = h('div', { class: 'review-img' }, h('span', { class: 'muted' }, '불러오는 중…'));
   ctx.store.blobUrl(it.file).then(u => imgBox.replaceChildren(h('img', { src: u, onclick: () => zoom(u) }))).catch(() => imgBox.replaceChildren(h('span', { class: 'muted' }, '그림을 불러오지 못했어요')));
+  let typed = null;          // 쓰던 의견 — 좋아요/고쳐 주세요를 눌러 다시 그려도 지워지지 않게 (사용자 11/16)
   const draw = () => {
     const comment = h('textarea', { rows: 3, placeholder: '의견 (선택) — 좋은 점, 고칠 점, 원하는 방향을 자유롭게', disabled: !editing });
-    comment.value = fb.comment || '';
+    comment.value = typed ?? fb.comment ?? '';
+    comment.addEventListener('input', () => { typed = comment.value; });
     const vbtn = (v, label) => h('button', { class: `btn ${verdict === v ? 'primary' : ''}`, disabled: !editing, onclick: () => { verdict = v; draw(); } }, label);
     const submit = async () => {
       if (!verdict && !comment.value.trim()) return toast('좋아요/고쳐 주세요를 고르거나 의견을 적어 주세요.', true);
       const feedback = { verdict, comment: comment.value.trim(), at: new Date().toISOString() };
       try {
         await ctx.store.updateJSON(FILE, d => { const x = d.items.find(y => y.id === it.id); if (x) { x.feedback = feedback; x.status = '피드백'; } return d; }, `확인 피드백: ${it.id} ${it.title}`, { items: [] });
-        Object.assign(it, { feedback, status: '피드백' }); Object.assign(fb, feedback);
+        Object.assign(it, { feedback, status: '피드백' }); Object.assign(fb, feedback); typed = null;
         toast('피드백을 보냈어요.');
         ctx.refreshBadges();
         if (tab === 'open') { el.classList.add('leaving'); setTimeout(() => window.dispatchEvent(new HashChangeEvent('hashchange')), 450); return; }
         editing = false; draw();
-      } catch (e) { toast(e.message, true); }
+      } catch (e) { toast(`보내지 못했어요 (${e.message}). 적은 의견은 그대로 있어요 — 다시 눌러 주세요.`, true); }
     };
     fill(el,
       h('div', { class: 'row' }, h('span', { class: 'did' }, it.id), h('h2', { style: { margin: 0, flex: 1 } }, it.title),
