@@ -83,16 +83,18 @@ async function save(ctx) {
 }
 
 export async function render(ctx, rest) {
-  const tab = rest[0] === 'requests' ? 'requests' : rest[0] === 'changes' ? 'changes' : 'edit';
+  const tab = rest[0] === 'requests' ? 'requests' : rest[0] === 'changes' ? 'changes' : rest[0] === 'gallery' ? 'gallery' : 'edit';
   const page = h('div', { class: 'page wide' },
     h('h1', {}, '🎬 스토리룸'),
     h('p', { class: 'sub' }, '장면 순서, 대사, 화자와 표정, 연출을 편집해요. 저장하면 Claude와 게임이 같은 내용을 봐요.'),
     h('div', { class: 'tabs' },
       h('a', { href: '#/story/edit', class: tab === 'edit' ? 'on' : '' }, '장면 편집'),
       h('a', { href: '#/story/changes', class: tab === 'changes' ? 'on' : '' }, '고친 대사 모아 보기'),
+      h('a', { href: '#/story/gallery', class: tab === 'gallery' ? 'on' : '' }, '일러스트 모아보기'),
       h('a', { href: '#/story/requests', class: tab === 'requests' ? 'on' : '' }, '요청함')));
   if (tab === 'requests') { page.append(requestPanel(ctx, 'story')); return page; }
   if (tab === 'changes') { page.append(await changesPanel(ctx)); return page; }
+  if (tab === 'gallery') { page.append(await cgGalleryPanel(ctx)); return page; }
   if (!S || S.store !== ctx.store || S.file !== FILE) await load(ctx);
   S.file = FILE;
   const sel = rest[1] && S.story.scenes[rest[1]] ? rest[1] : S.story.flow[0]?.id;
@@ -733,6 +735,85 @@ async function preview(s) {
   };
   stage.addEventListener('click', e => { if (!e.target.closest('button')) next(); });
   next();
+}
+
+
+// ---------- 일러스트 모아보기 (사용자 req_mwlbj6edtyb4) ----------
+// 게임에 나오는 일러스트 장면만, 게임 순서(장 → 장면 흐름 → 대사 순)대로 '일러스트 + 그 위 대화창' 모습으로 쭉 늘어놓는다.
+// 화풍의 통일감과 이야기 흐름을 한눈에 검토하는 용도. 대화창에는 그 일러스트가 떠 있는 동안 처음 나오는 대사를 보여 준다.
+const chapterRank = f => f.endsWith('prologue.json') ? 0 : (parseInt((f.match(/chapter(\d+)/) || [])[1], 10) || 99);
+const chapterName = f => f.endsWith('prologue.json') ? '프롤로그' : (f.match(/chapter(\d+)/) ? `${f.match(/chapter(\d+)/)[1]}장` : f.split('/').pop().replace('.json', ''));
+async function cgGalleryPanel(ctx) {
+  if (!S || S.store !== ctx.store) await load(ctx);      // 초상화·화자 이름용 (인물 자료)
+  const box = h('div', {});
+  const files = (await ctx.store.list('data/story').catch(() => [])).filter(f => f.name.endsWith('.json')).map(f => f.path)
+    .sort((a, b) => chapterRank(a) - chapterRank(b));
+  const stories = await Promise.all(files.map(f => ctx.store.getJSON(f).then(r => [f, r.data]).catch(() => [f, null])));
+  const allIll = {};
+  for (const [, st] of stories) Object.assign(allIll, st?.illustrations || {});        // 다른 장의 일러스트 칸도 찾게
+  const items = [];
+  for (const [file, st] of stories) {
+    if (!st?.scenes) continue;
+    const flowIds = (st.flow || []).map(f => f.id).filter(id => st.scenes[id]);
+    const order = [...flowIds, ...Object.keys(st.scenes).filter(id => !flowIds.includes(id))];
+    for (const sid of order) {
+      const steps = st.scenes[sid].steps || [];
+      steps.forEach((x, i) => {
+        if (x.kind !== 'cmd' || !isShowCg(x.op) || !x.args?.key) return;
+        let line = null;
+        for (let j = i + 1; j < steps.length; j++) {
+          const y = steps[j];
+          if (y.kind === 'cmd' && (isHideCg(y.op) || isShowCg(y.op))) break;
+          if (y.kind === 'line') { line = y; break; }
+        }
+        items.push({ file, sid, sceneTitle: st.scenes[sid].title || sid, inFlow: flowIds.includes(sid), key: x.args.key, ill: allIll[x.args.key], line });
+      });
+    }
+  }
+  if (!items.length) { box.append(h('p', { class: 'muted' }, '아직 일러스트가 나오는 장면이 없어요.')); return box; }
+  const fileSel = h('select', {}, [['all', '모든 장'], ...files.map(f => [f, chapterName(f)])].map(([v, t]) => h('option', { value: v }, t)));
+  const onlyFlow = h('input', { type: 'checkbox', checked: true });
+  const list = h('div', { class: 'cg-gallery' });
+  const io = new IntersectionObserver(ents => {
+    for (const en of ents) {
+      if (!en.isIntersecting || en.target.dataset.loaded) continue;
+      en.target.dataset.loaded = '1'; io.unobserve(en.target);
+      en.target._fill?.();
+    }
+  }, { rootMargin: '400px' });
+  const draw = () => {
+    list.innerHTML = '';
+    const shown = items.filter(e => (fileSel.value === 'all' || e.file === fileSel.value) && (!onlyFlow.checked || e.inFlow));
+    count.textContent = `${shown.length}장`;
+    shown.forEach((e, n) => {
+      const stage = h('div', { class: 'pv-stage mock cg-stage' });
+      stage._fill = async () => {
+        const url = e.ill?.file ? await S.store.blobUrl(e.ill.file).catch(() => null) : null;
+        const scene = h('div', { class: `pv-scene ${url ? '' : 'pv-missing'}`, style: url ? { backgroundImage: `url(${url})` } : {} }, url ? null : `🖼 일러스트 준비 중: ${e.ill?.title || e.key}`);
+        let pbox = null, layer = null;
+        if (e.line) {
+          const purl = await portraitUrl(e.line.speaker, e.line.emotion);
+          if (purl) layer = portraitLayer(purl, charOf(e.line.speaker), e.line.emotion);
+          pbox = h('div', { class: `pv-box ${purl ? '' : 'noportrait'}` }, h('div', { class: 'pv-name' }, speakerName(e.line)), h('div', { class: 'pv-text' }, e.line.text || ''));
+        }
+        stage.replaceChildren(...[scene, pbox, layer].filter(Boolean));
+        requestAnimationFrame(() => layoutStage(stage));
+      };
+      const open = h('a', { href: `#/story/edit/${e.sid}`, onclick: () => { localStorage.setItem('pyle.storyFile', e.file); FILE = e.file; S = null; } }, '장면 열기 →');
+      list.append(h('div', { class: 'cg-item' },
+        h('div', { class: 'cg-head' }, h('b', {}, `${n + 1}. ${e.ill?.title || e.key}`), h('span', { class: 'muted' }, ` · ${chapterName(e.file)} · ${e.sceneTitle}`), h('span', { class: 'spacer' }), open),
+        stage));
+      io.observe(stage);
+    });
+  };
+  const count = h('span', { class: 'muted' });
+  fileSel.onchange = draw; onlyFlow.onchange = draw;
+  box.append(h('p', { class: 'muted' }, '게임에 나오는 일러스트만 게임 순서대로 늘어놓았어요. 대화창에는 그 일러스트가 떠 있을 때 처음 나오는 대사를 보여 줘요. 화풍이 고른지, 이야기가 자연스럽게 이어지는지 훑어볼 때 쓰세요.'),
+    h('div', { class: 'row', style: { gap: '10px', alignItems: 'center', margin: '8px 0 14px' } }, fileSel,
+      h('label', { style: { display: 'flex', gap: '4px', alignItems: 'center' } }, onlyFlow, '이야기 흐름에 들어간 장면만'), count),
+    list);
+  draw();
+  return box;
 }
 
 

@@ -466,3 +466,10 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .cglook .pv-frame{opacity:var(--cg-alpha,1)}
 .cglook .pv-box:not(.framed){background:rgba(20,26,22,calc(.88 * var(--cg-alpha,1)))}
 .cg-noportrait .pv-pclip,.cg-noportrait .ui-grab{display:none}
+
+/* 스토리 룸 — 일러스트 모아보기 (req_mwlbj6edtyb4) */
+.cg-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(460px,100%),1fr));gap:18px}
+.cg-item{display:flex;flex-direction:column;gap:6px}
+.cg-head{display:flex;align-items:baseline;gap:4px;font-size:14px}
+.cg-head .spacer{flex:1}
+.cg-gallery .pv-stage.mock{max-width:none;width:100%;cursor:default}
