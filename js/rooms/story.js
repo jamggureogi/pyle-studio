@@ -178,7 +178,16 @@ function flowTree(ctx, sel) {
   const byClaude = Object.values(S.story.scenes).filter(x => x.claudeNote);
   const notice = byClaude.length && h('details', { class: 'claude-notice' },
     h('summary', {}, h('b', {}, `🤖 Claude가 새로 쓴 대사 ${byClaude.length}개`), ' — 눌러서 보기'),
-    h('p', { class: 'muted', style: { margin: '4px 0' } }, '읽어 보고 장면마다 [확인했어요]를 눌러 주세요. 목록에도 🤖가 붙어 있어요.'),
+    h('div', { class: 'row', style: { margin: '4px 0', gap: '8px', alignItems: 'center' } },
+      h('span', { class: 'muted' }, '읽어 보고 장면마다 [확인했어요]를 누르거나, 이미 다 보셨으면 오른쪽 버튼으로 한 번에. 목록에도 🤖가 붙어 있어요.'),
+      h('span', { class: 'spacer' }),
+      // 사용자 req_mwkhz07vld3v (11/17): 하나씩 누르기 힘들다 → 한 번에 확인
+      h('button', { class: 'btn small primary', onclick: async () => {
+        if (!await confirmBox(`🤖 Claude가 새로 쓴 대사 ${byClaude.length}개를 모두 확인한 것으로 표시할까요?`, '모두 확인')) return;
+        for (const x of byClaude) { delete x.claudeNote; markDirty(x.id); }
+        rerender(ctx, sel);
+        toast(`${byClaude.length}개 모두 확인 표시를 했어요. [저장]을 누르면 반영돼요.`);
+      } }, '모두 확인했어요')),
     h('div', { class: 'links' }, byClaude.map(x => h('a', { href: `#/story/edit/${x.id}` }, x.title || x.id))));
   return h('div', { class: 'card tree story-tree' },
     notice,
