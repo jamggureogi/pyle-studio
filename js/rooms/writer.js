@@ -7,7 +7,7 @@ const FILE = 'data/story_proposals.json';
 const CHARS = 'data/characters.json';
 const CMD = {
   fade_out: '화면 암전', fade_in: '암전 해제', camera_pan: '카메라 이동', start_battle: '전투 시작', add_party: '동료 합류', play_se: '효과음', play_bgm: '배경음악', wait: '잠시 대기',
-  title_motion: '타이틀 연출', flash: '화면 번쩍임', shake: '화면 흔들림', show_illustration: '일러스트 표시', hide_illustration: '일러스트 닫기', move_actor: '인물 이동',
+  title_motion: '타이틀 연출', flash: '화면 번쩍임', shake: '화면 흔들림', show_illustration: '일러스트 표시', hide_illustration: '일러스트 닫기', show_cg: '일러스트 표시', hide_cg: '일러스트 닫기', move_actor: '인물 이동',
 };
 const TABS = [['open', '새 제안', p => !p.status || p.status === '제안'], ['hold', '보류·의견 보냄', p => p.status === '보류'], ['done', '편입됨', p => p.status === '편입됨'], ['no', '반려', p => p.status === '반려']];
 const md = t => renderMarkdown(t || '');
@@ -77,8 +77,8 @@ function card(ctx, p, chars) {
         d.scenes ||= {}; d.flow ||= [];
         let id = sc.id;
         while (d.scenes[id]) id = `${sc.id}_${Math.random().toString(36).slice(2, 5)}`;
-        // 장면이 쓰는 일러스트(show_illustration)를 정식 스토리의 illustrations로 함께 옮김
-        const keys = (sc.steps || []).filter(st => st.kind === 'cmd' && st.op === 'show_illustration').map(st => st.args?.key || st.args?.id).filter(Boolean);
+        // 장면이 쓰는 일러스트(show_illustration·show_cg — 게임은 둘 다 같은 명령)를 정식 스토리의 illustrations로 함께 옮김
+        const keys = (sc.steps || []).filter(st => st.kind === 'cmd' && (st.op === 'show_illustration' || st.op === 'show_cg')).map(st => st.args?.key || st.args?.id).filter(Boolean);
         d.illustrations ||= {};
         for (const k of keys) if (p.illustrations?.[k] && !d.illustrations[k]) {
           const il = p.illustrations[k];

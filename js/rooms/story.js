@@ -13,6 +13,7 @@ const statusClass = { 확정: 'ok', 초안: 'info', 수정필요: 'warn', 작성
 const CATEGORIES = { event: '이벤트', npc: 'NPC 대화', battle_start: '전투 시작', battle_after: '전투 후', field: '필드 조사', travel: '이동' };
 const OPS = {
   set_flag: '플래그 설정', give_item: '아이템 지급', remove_item: '아이템 회수', show_cg: '일러스트 표시', hide_cg: '일러스트 숨김',
+  show_illustration: '일러스트 표시', hide_illustration: '일러스트 닫기',
   fade_out: '화면 암전', fade_in: '암전 해제', camera_pan: '카메라 이동', start_battle: '전투 시작', add_party: '동료 합류', play_se: '효과음', play_bgm: '배경음악', wait: '잠시 대기',
   title_motion: '타이틀 연출', flash: '화면 번쩍임', shake: '화면 흔들림',
   // 필드 위 인물 연출 (RV-076): id=player(파일)·맵 인물·세운 인물, 자리=[x,y] 칸 또는 인물 id
@@ -419,7 +420,7 @@ function stepRow(ctx, s, steps, st, i, redraw, change) {
       }
       change();
     };
-    body = h('div', { class: 'cmd' }, h('span', { class: 'tag' }, '명령'), opSel, st.op === 'show_cg' ? cgPicker(ctx, st, change, redraw) : args);
+    body = h('div', { class: 'cmd' }, h('span', { class: 'tag' }, '명령'), opSel, isShowCg(st.op) ? cgPicker(ctx, st, change, redraw) : args);
     opSel.addEventListener('change', redraw);
   }
   row.append(grip, check, body, tools);
@@ -511,6 +512,9 @@ async function askReview(ctx, s) {
 }
 
 // ---------- illustration picker (show_cg) ----------
+// 게임은 show_cg 와 show_illustration 을 똑같이 일러스트 표시로 쓴다 (사용자 req_mwkxs31j5t59 — 스토리 룸에서 show_illustration 칸이 그림 없이 명령으로만 보였음)
+function isShowCg(op) { return op === 'show_cg' || op === 'show_illustration'; }
+function isHideCg(op) { return op === 'hide_cg' || op === 'hide_illustration'; }
 const MAX_CG = 3;
 let hoverBox = null;
 function hoverPreview(url, e) {
@@ -546,6 +550,8 @@ function cgPicker(ctx, st, change, redraw) {
   const keySel = h('select', {}, h('option', { value: '' }, '(일러스트 고르기)'),
     Object.entries(ills).map(([k, v]) => h('option', { value: k, selected: k === st.args.key }, `${v.title || k}${v.file ? '' : ' · 준비 중'}`)),
     h('option', { value: '__new' }, '+ 새 일러스트 칸 만들기'));
+  // 다른 장(파일)에 있는 일러스트 칸을 쓰는 경우 (예: 1장 석실에서 프롤로그 꿈 그림) — 비어 보이지 않게 표시
+  if (st.args.key && !ills[st.args.key]) keySel.append(h('option', { value: st.args.key, selected: true }, `🔗 ${st.args.key} (다른 장의 일러스트 — 그 장에서 바꿔요)`));
   keySel.onchange = async () => {
     if (keySel.value === '__new') {
       const title = h('input', { placeholder: '예) 비 오는 밤의 다리' });
@@ -683,7 +689,7 @@ async function swapIllustration(ctx, key, files, pick) {
 
 // ---------- preview ----------
 async function preview(s) {
-  const steps = s.steps.filter(st => st.kind !== 'cmd' || ['show_cg', 'hide_cg', 'fade_out', 'give_item', 'add_party', 'start_battle', 'flash', 'shake', 'title_motion'].includes(st.op));
+  const steps = s.steps.filter(st => st.kind !== 'cmd' || ['show_cg', 'hide_cg', 'show_illustration', 'hide_illustration', 'fade_out', 'give_item', 'add_party', 'start_battle', 'flash', 'shake', 'title_motion'].includes(st.op));
   if (!steps.length) return toast('미리볼 대사가 없어요.', true);
   let i = 0, cg = null, missing = null;
   const stage = h('div', { class: 'pv-stage' });
@@ -696,12 +702,12 @@ async function preview(s) {
     if (i >= steps.length) return close();
     const st = steps[i++];
     if (st.kind === 'cmd') {
-      if (st.op === 'show_cg') {
+      if (isShowCg(st.op)) {
         const ill = S.story.illustrations?.[st.args?.key];
         cg = ill?.file ? await S.store.blobUrl(ill.file).catch(() => null) : null;
         missing = ill && !ill.file ? ill.title : null;
-      } else if (st.op === 'hide_cg') { cg = null; missing = null; }
-      if (['show_cg', 'hide_cg'].includes(st.op)) return next();
+      } else if (isHideCg(st.op)) { cg = null; missing = null; }
+      if (isShowCg(st.op) || isHideCg(st.op)) return next();
     }
     const scene = h('div', { class: `pv-scene ${missing ? 'pv-missing' : ''}`, style: cg ? { backgroundImage: `url(${cg})` } : {} }, missing && `🖼 일러스트 준비 중: ${missing}`);
     if (st.kind === 'cmd' && st.op === 'flash') { stage.classList.remove('pv-flash'); void stage.offsetWidth; stage.classList.add('pv-flash'); }
@@ -744,7 +750,7 @@ async function changesPanel(ctx) {
   for (const c of (ch.data?.characters || [])) names[c.id] = c.name || c.id;
   const who = h('select', {}, ['전체', 'Claude', '작가', '감독', '사용자'].map(w => h('option', { value: w }, w === '전체' ? '누가 고쳤든 전체' : w + '가 고친 것')));
   const kind = h('select', {}, [['edit', '고친 대사만'], ['all', '고친 대사 + 새 대사'], ['new', '새로 쓴 대사만']].map(([v, t]) => h('option', { value: v }, t)));
-  const fileSel = h('select', {}, [['all', '모든 장'], ['data/story/prologue.json', '프롤로그'], ['data/story/chapter1.json', '1장']].map(([v, t]) => h('option', { value: v }, t)));
+  const fileSel = h('select', {}, [['all', '모든 장'], ['data/story/prologue.json', '프롤로그'], ['data/story/chapter1.json', '1장'], ['data/story/chapter2.json', '2장']].map(([v, t]) => h('option', { value: v }, t)));
   const q = h('input', { class: 'search', placeholder: '대사 검색' });
   const list = h('div', {});
   const draw = () => {
