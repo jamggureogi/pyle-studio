@@ -10,6 +10,7 @@ const TILE = 64;
 const INDEX = 'data/maps/index.json';
 const TERRAINS = 'data/terrains.json';
 const STORY = 'data/story/prologue.json';
+const OBJ_PAD = 16;     // 게임 data/ui.json fieldObjPad 와 같게 (사물 막힘을 양옆·아래로 넓히는 px)
 let OBJ_USE = null, OBJ_USE_DONE = false, OBJ_USE_MAP = new Map();      // 사물 그림 → 그 그림이 놓인 맵 id 들 (모든 맵을 한 번만 읽음)
 function objectUsage(ctx, list) {
   return Promise.all(list.map(m => ctx.store.getJSON(`data/maps/${m.id}.json`).then(f => [m.id, (f.data.objects || []).map(o => o.file)]).catch(() => [m.id, []])))
@@ -209,7 +210,7 @@ async function editView(ctx, id) {
     const p = propOf(o), w = im.naturalWidth * o.scale, hh = im.naturalHeight * o.scale, x = o.x - w / 2, y = o.y - hh;
     const rect = r => { let a = r[0], b = r[2]; if (o.flip) { a = 1 - r[2]; b = 1 - r[0]; } return { x: x + w * a, y: y + hh * r[1], w: w * (b - a), h: hh * (r[3] - r[1]) }; };
     const bl = Array.isArray(p.block) && p.block.length ? (Array.isArray(p.block[0]) ? p.block : [p.block]).map(rect) : null;
-    return { x, y, w, h: hh, ground: !!p.ground, bridge: !!p.bridge, walk: Array.isArray(p.walk) ? rect(p.walk) : null, block: bl, collide: p.collide };
+    return { x, y, w, h: hh, ground: !!p.ground, noPad: !!p.noPad, bridge: !!p.bridge, walk: Array.isArray(p.walk) ? rect(p.walk) : null, block: bl, collide: p.collide };
   }
   // 네모 outer에서 keep(걷는 자리)을 뺀 나머지 조각들
   function minus(o, k) {
@@ -299,6 +300,9 @@ async function editView(ctx, id) {
         g.fillStyle = 'rgba(50,220,100,0.32)'; g.fillRect(bx.walk.x, bx.walk.y, bx.walk.w, bx.walk.h);
       } else if (bx.block) {
         g.fillStyle = red; for (const r of bx.block) g.fillRect(r.x, r.y, r.w, r.h);
+        // 게임은 사람이 사물에 겹쳐 보이지 않게 막힘을 양옆·아래로 ¼칸 더 넓힘(UI 룸 fieldObjPad) — 그 자리를 옅게 보여 줌 (req_mwly3kr58fys)
+        const pad = (bx.noPad || bx.ground) ? 0 : OBJ_PAD;
+        if (pad) { g.fillStyle = 'rgba(255,40,30,0.16)'; for (const r of bx.block) { g.fillRect(r.x - pad, r.y, pad, r.h + pad); g.fillRect(r.x + r.w, r.y, pad, r.h + pad); g.fillRect(r.x, r.y + r.h, r.w, pad); } }
       } else if (bx.collide !== false && !bx.ground) {
         g.fillStyle = 'rgba(255,150,20,0.5)';
         g.beginPath(); g.arc(o.x, o.y - 8, Math.min(46, Math.max(10, bx.w * 0.16)), 0, Math.PI * 2); g.fill();
@@ -379,6 +383,12 @@ async function editView(ctx, id) {
   function paintObjPass(p) {
     const o = st.sel, bx = o && objBox(o);
     if (!bx) return;
+    if (curMode === 0) {          // ↺ 자동으로 되돌리기: 이 맵의 같은 그림 사물 모두 기본값(data/props.json)으로 (req_mwly3kr58fys — 전에는 '열기'처럼 지워졌음)
+      let ch = false;
+      for (const o2 of M.map.objects) if (o2.file === o.file && (o2.block || o2.blockCells || 'collide' in o2)) { delete o2.block; delete o2.blockCells; delete o2.collide; ch = true; }
+      if (ch) { markDirty(); overlay(); drawSide(); }
+      return;
+    }
     objCellsInit(o, bx);
     const set = new Set(o.blockCells), n = st.brush - 1, k = Math.max(1, st.passCell / FINE);
     let fx = (p.x - bx.x) / bx.w; if (o.flip) fx = 1 - fx;
@@ -637,7 +647,8 @@ async function editView(ctx, id) {
     if (st.tool === 'blend') { painting = true; paintBlend(p); return; }
     if (st.tool === 'pass') {
       // 마우스: 왼쪽 = 막기, 오른쪽 = 열기 (req_mwej3enbhnjo). 손가락·펜은 왼쪽 목록에서 고른 것
-      curMode = e.pointerType === 'mouse' ? (e.button === 2 ? 1 : (st.passMode === 0 ? 0 : 2)) : st.passMode;
+      // 왼쪽 단추 = 목록에서 고른 것(막기·열기·자동), 오른쪽 단추 = 그 반대 — 전에는 '열기'를 골라도 왼쪽 단추가 막기로 칠했음 (사용자 req_mwly3kr58fys)
+      curMode = e.pointerType === 'mouse' && e.button === 2 ? (st.passMode === 2 ? 1 : 2) : st.passMode;
       const inSel = isBld(st.sel) ? (inFoot(st.sel, p) || (() => { const r = bldBox(st.sel); return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; })()) : inBox(st.sel, p);
       if (st.passTarget === 'object' && !inSel) {     // 사물·건물 고르기 (고른 것은 노란 점선 테두리)
         st.sel = hitObjBox(p) || hitBuilding(p) || null; overlay(); drawProps(); drawSide();
@@ -790,7 +801,7 @@ async function editView(ctx, id) {
           st.passTarget === 'object' && isBld(st.sel) && h('p', { class: 'muted', style: { fontSize: '12px' } }, `고른 건물: ${st.sel.label || st.sel.id} — 건물은 발자리 칸 단위로 막기·열기 (파랑 = 걸을 수 있는 마당 칸).`),
           h('h4', {}, '붓 크기'),
           h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
-          h('p', { class: 'muted', style: { fontSize: '12px' } }, '½칸·¼칸 붓은 칸보다 작게 막거나 열어요 (작은 분홍·파랑 네모). 게임에서 지나갈 수 있는지를 칸마다 보여 줘요. 빨강 = 자동으로 막힌 곳(물·건물·절벽 벽·난간·넓은 사물), 초록 = 다리·계단의 걷는 자리, 주황 원 = 나무·바위 밑동, 분홍 = 붓으로 막은 칸, 파랑 = 붓으로 연 칸. 자동 판정이 어색한 곳만 붓으로 막거나 여세요. 위쪽 [🚧 통행]을 켜면 다른 도구를 쓸 때도 보여요.')),
+          h('p', { class: 'muted', style: { fontSize: '12px' } }, '½칸·¼칸 붓은 칸보다 작게 막거나 열어요 (작은 분홍·파랑 네모). 게임에서 지나갈 수 있는지를 칸마다 보여 줘요. 빨강 = 자동으로 막힌 곳(물·건물·절벽 벽·난간·넓은 사물), 초록 = 다리·계단의 걷는 자리, 주황 원 = 나무·바위 밑동, 분홍 = 붓으로 막은 칸, 파랑 = 붓으로 연 칸. 자동 판정이 어색한 곳만 붓으로 막거나 여세요. 위쪽 [🚧 통행]을 켜면 다른 도구를 쓸 때도 보여요. 마우스: 왼쪽 = 목록에서 고른 것, 오른쪽 = 반대. 사물 둘레의 옅은 빨강 = 게임이 사람과 겹쳐 보이지 않게 ¼칸 더 막는 자리(그래서 사물 사이 틈은 ½칸보다 넓어야 지나가요).')),
         st.tool === 'event' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '맵을 누르면 그 칸에 이벤트 지점이 생겨요. 이미 있는 지점을 누르면 선택돼요. 오른쪽에서 종류와 연결할 스토리 장면을 고르세요.'),
         st.tool === 'object' && h('div', {},
           h('p', { class: 'muted', style: { fontSize: '13px' } }, '사물을 고르고 맵을 누르면 그 자리에 놓여요(누른 곳이 사물의 발밑). 놓인 사물은 끌어서 옮겨요.'),
