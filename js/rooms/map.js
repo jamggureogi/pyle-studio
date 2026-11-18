@@ -136,7 +136,7 @@ async function loadMap(ctx, id) {
   const mid = id && list.find(m => m.id === id) ? id : list[0]?.id;
   if (!mid) return { list, empty: true };
   const f = await ctx.store.getJSON(`data/maps/${mid}.json`);
-  return { list, id: mid, map: f.data, sha: f.sha, defs: terr.data.terrains, scenes: story.data.scenes || {}, assets, sprites: sprites.data || {}, props: (propsF.data || {}).props || {}, dirty: false, store: ctx.store };
+  return { list, id: mid, map: f.data, sha: f.sha, defs: terr.data.terrains, scenes: story.data.scenes || {}, assets, sprites: sprites.data || {}, props: (propsF.data || {}).props || {}, bsol: (propsF.data || {}).buildingSolids || {}, dirty: false, store: ctx.store };
 }
 
 async function editView(ctx, id) {
@@ -234,6 +234,7 @@ async function editView(ctx, id) {
       if (bad >= 2) P[y * cols + x] = 1;
     }
     for (const b of M.map.buildings || []) {
+      if (bldSolids(b)) continue;          // 그림 모양대로 막는 건물(solids)은 아래 drawPass 가 ¼칸 네모로 그림 (게임과 같음)
       const op = new Set((b.open || []).map(c => `${c[0]},${c[1]}`));     // 건물 그림이 빈 발자리 칸 = 걸을 수 있음 (게임과 같음)
       for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) if (x >= 0 && y >= 0 && x < cols && y < rows && !op.has(`${x},${y}`)) P[y * cols + x] = 1;
     }
@@ -307,6 +308,12 @@ async function editView(ctx, id) {
         g.fillStyle = 'rgba(255,150,20,0.5)';
         g.beginPath(); g.arc(o.x, o.y - 8, Math.min(46, Math.max(10, bx.w * 0.16)), 0, Math.PI * 2); g.fill();
       }
+    }
+    // 건물 막힘 네모(solids, 칸 단위 — 게임이 그대로 씀). 모든 맵 공통값(💾 저장)은 점선 테두리
+    for (const b of M.map.buildings || []) {
+      const S = bldSolids(b); if (!S) continue;
+      g.fillStyle = red; for (const r of S) g.fillRect(r[0] * TILE, r[1] * TILE, (r[2] - r[0]) * TILE, (r[3] - r[1]) * TILE);
+      if (!(Array.isArray(b.solids) && b.solids.length)) { g.save(); g.setLineDash([6, 5]); g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 2; for (const r of S) g.strokeRect(r[0] * TILE, r[1] * TILE, (r[2] - r[0]) * TILE, (r[3] - r[1]) * TILE); g.restore(); }
     }
     // 칸보다 작은 통행 붓 (passFine, 16px 조각): 분홍 = 막기, 파랑 = 열기
     const pf = M.map.passFine;
@@ -438,19 +445,68 @@ async function editView(ctx, id) {
       toast(`${key}: 모든 맵의 같은 그림에 저장했어요. 이 맵도 [저장]을 눌러 주세요.`);
     } catch (e) { toast(e.message, true); }
   }
-  // 건물(신전 같은 큰 건물)은 발자리 칸 단위로: 막기 = open에서 빼기, 열기 = open에 넣기 (req_mwej5tsphqmq)
+  // 건물 막힘 (사용자 req_mwmadzczsyfn): ¼칸(16px) 조각 묶음으로 고치고 b.solids [x0,y0,x1,y1](칸)로 저장 — 게임이 그대로 씀.
+  // 맵에 적은 값(b.solids) > 모든 맵 공통값(data/props.json buildingSolids, 건물 자리 기준) > 발자리 칸(open 은 빈 칸)
+  function bldDefaultSolids(b) { const r = M.bsol?.[b.id]; return Array.isArray(r) && r.length ? r.map(q => [q[0] + b.x, q[1] + b.y, q[2] + b.x, q[3] + b.y]) : null; }
+  function bldSolids(b) { return (Array.isArray(b.solids) && b.solids.length) ? b.solids : (b.open && b.open.length ? null : bldDefaultSolids(b)); }
+  function bldCellSet(b) {
+    const set = new Set(), S = bldSolids(b);
+    if (S) { for (const r of S) for (let j = Math.round(r[1] * 4); j < Math.round(r[3] * 4); j++) for (let i = Math.round(r[0] * 4); i < Math.round(r[2] * 4); i++) set.add(`${i},${j}`); }
+    else {
+      const op = new Set((b.open || []).map(c => `${c[0]},${c[1]}`));
+      for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) if (!op.has(`${x},${y}`)) for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) set.add(`${x * 4 + i},${y * 4 + j}`);
+    }
+    return set;
+  }
+  function cellsToRects(set) {          // 줄마다 이어진 조각 → 위아래로 같은 폭이면 합침 → [x0,y0,x1,y1](칸)
+    const rows = {};
+    for (const k of set) { const [i, j] = k.split(',').map(Number); (rows[j] ||= []).push(i); }
+    const spans = [];
+    for (const [j, is] of Object.entries(rows)) { is.sort((a, b) => a - b); let a = is[0], c = is[0]; for (const i of is.slice(1)) { if (i === c + 1) c = i; else { spans.push([a, c + 1, +j]); a = c = i; } } spans.push([a, c + 1, +j]); }
+    spans.sort((p, q) => p[0] - q[0] || p[1] - q[1] || p[2] - q[2]);
+    const rects = [], last = new Map();
+    for (const [a, c, j] of spans) { const k = `${a},${c}`, r = last.get(k); if (r && r[3] === j) r[3] = j + 1; else { const n = [a, j, c, j + 1]; rects.push(n); last.set(k, n); } }
+    return rects.map(r => r.map(v => v / 4));
+  }
   function paintBuildingPass(b, p) {
-    const n = st.brush - 1, cc = Math.floor(p.x / TILE), cr = Math.floor(p.y / TILE);
-    const op = new Set((b.open || []).map(c => `${c[0]},${c[1]}`)); let changed = false;
-    for (let r = cr - n; r <= cr + n; r++) for (let c = cc - n; c <= cc + n; c++) {
-      if (c < b.x || r < b.y || c >= b.x + b.w || r >= b.y + b.h) continue;
-      const k = `${c},${r}`;
-      if (curMode === 2 || curMode === 0) { if (op.delete(k)) changed = true; }
-      else if (!op.has(k)) { op.add(k); changed = true; }
+    if (curMode === 0) {          // ↺ 되돌리기: 이 맵에 적은 막힘을 지우고 모든 맵 공통값(없으면 발자리 칸)으로
+      if (b.solids || b.open) { delete b.solids; delete b.open; markDirty(); overlay(); drawSide(); }
+      return;
+    }
+    const set = bldCellSet(b), cs = st.passCell, k = Math.max(1, cs / FINE), n = st.brush - 1;
+    const box = bldBox(b), inside = (i, j) => { const x = (i + 0.5) * FINE, y = (j + 0.5) * FINE;
+      return (x >= b.x * TILE && x < (b.x + b.w) * TILE && y >= b.y * TILE && y < (b.y + b.h) * TILE) || (x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h); };
+    const ci = Math.floor(p.x / cs) * k, cj = Math.floor(p.y / cs) * k;
+    let changed = false;
+    for (let j = cj - n * k; j < cj + (n + 1) * k; j++) for (let i = ci - n * k; i < ci + (n + 1) * k; i++) {
+      if (!inside(i, j)) continue;
+      const key = `${i},${j}`;
+      if (curMode === 2) { if (!set.has(key)) { set.add(key); changed = true; } }
+      else if (set.delete(key)) changed = true;
     }
     if (!changed) return;
-    b.open = [...op].map(k => k.split(',').map(Number)); if (!b.open.length) delete b.open;
+    b.solids = cellsToRects(set); delete b.open;
     markDirty(); overlay();
+  }
+  // 모든 맵에: data/props.json buildingSolids[건물 id] 에 건물 자리 기준으로 저장 → 이 맵의 같은 건물 개별 값은 지워 공통값을 따르게
+  async function saveBldPassToProps(b) {
+    const S = bldSolids(b) || cellsToRects(bldCellSet(b));
+    const rel = S.map(r => [+(r[0] - b.x).toFixed(2), +(r[1] - b.y).toFixed(2), +(r[2] - b.x).toFixed(2), +(r[3] - b.y).toFixed(2)]);
+    try {
+      const f = await ctx.store.getText('data/props.json');
+      const pj = f ? JSON.parse(f.text) : { props: {} };
+      pj.buildingSolids ||= {}; pj.buildingSolids[b.id] = rel;
+      const py = v => Array.isArray(v) ? '[' + v.map(py).join(', ') + ']' : (v && typeof v === 'object') ? '{' + Object.entries(v).map(([k, x]) => JSON.stringify(k) + ': ' + py(x)).join(', ') + '}' : JSON.stringify(v);
+      const its = Object.entries(pj.props || {}), rest = Object.keys(pj).filter(k => k !== 'note' && k !== 'props');
+      const lines = ['{', '  "note": ' + JSON.stringify(pj.note || '') + ',', '  "props": {',
+        ...its.map(([k, v], i) => '    ' + JSON.stringify(k) + ': ' + py(v) + (i < its.length - 1 ? ',' : '')),
+        '  }' + (rest.length ? ',' : ''), ...rest.map((k, i) => '  ' + JSON.stringify(k) + ': ' + py(pj[k]) + (i < rest.length - 1 ? ',' : '')), '}'];
+      await ctx.store.putText('data/props.json', lines.join('\n') + '\n', f && f.sha, `건물 충돌 판정 저장: ${b.id}`);
+      M.bsol = pj.buildingSolids;
+      for (const b2 of M.map.buildings || []) if (b2.id === b.id) { delete b2.solids; delete b2.open; }
+      markDirty(); overlay(); drawSide();
+      toast(`${b.label || b.id}: 모든 맵의 같은 건물에 저장했어요. 이 맵도 [저장]을 눌러 주세요.`);
+    } catch (e) { toast(e.message, true); }
   }
   const inBox = (o, p) => { const bx = o && objBox(o); return bx && p.x >= bx.x && p.x <= bx.x + bx.w && p.y >= bx.y && p.y <= bx.y + bx.h; };
   const hitObjBox = p => [...M.map.objects].reverse().find(o => inBox(o, p) && !propOf(o).ground) || [...M.map.objects].reverse().find(o => inBox(o, p));
@@ -464,11 +520,10 @@ async function editView(ctx, id) {
   const inFoot = (b, p) => p.x >= b.x * TILE && p.x < (b.x + b.w) * TILE && p.y >= b.y * TILE && p.y < (b.y + b.h) * TILE;
   const hitBuilding = p => (M.map.buildings || []).find(b => inFoot(b, p)) || [...(M.map.buildings || [])].sort((a, b) => (b.y + b.h) - (a.y + a.h)).find(b => { const r = bldBox(b); return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; });
   const isBld = s => s && (M.map.buildings || []).includes(s);
-  const inFootOrBox = (b, p) => { if (inFoot(b, p)) return true; const r = bldBox(b); return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; };
   let curMode = 2, rectDrag = null;
   const paintPass = p => {
     // 건물에 ½칸·¼칸 단위: 건물 막힘은 칸 단위라, 칸보다 작은 단위는 맵의 섬세한 통행(passFine)으로 칠함 — 게임에서 건물 막힌 칸 위의 열기 조각도 그대로 열림 (사용자 req_mwm6mirang0q)
-    if (st.passTarget === 'object') return isBld(st.sel) ? (st.passCell < TILE ? (inFootOrBox(st.sel, p) && paintPassFine(p)) : paintBuildingPass(st.sel, p)) : paintObjPass(p);
+    if (st.passTarget === 'object') return isBld(st.sel) ? paintBuildingPass(st.sel, p) : paintObjPass(p);
     if (st.passCell < TILE) return paintPassFine(p);
     const { cols, rows } = M.map, cr = Math.floor(p.y / TILE), cc = Math.floor(p.x / TILE), n = st.brush - 1;
     M.map.passOverride ||= new Array(cols * rows).fill(0);
@@ -800,7 +855,8 @@ async function editView(ctx, id) {
             : isBld(st.sel) ? '' : '먼저 맵에서 사물이나 건물(신전처럼 큰 건물도)을 눌러 고르세요. 고른 것은 노란 점선 테두리로 보여요.'),
           st.passTarget === 'object' && st.sel && st.sel.blockCells && h('button', { class: 'btn small', onclick: () => { for (const o2 of M.map.objects) if (o2.file === st.sel.file) { delete o2.blockCells; delete o2.block; delete o2.collide; } markDirty(); overlay(); drawSide(); } }, '↺ 이 그림의 막힘을 기본으로'),
           st.passTarget === 'object' && st.sel && M.map.objects.includes(st.sel) && st.sel.block && h('button', { class: 'btn small primary', onclick: () => saveObjPassToProps(st.sel) }, '💾 이 사물의 충돌 판정을 모든 맵의 같은 그림에 저장'),
-          st.passTarget === 'object' && isBld(st.sel) && h('p', { class: 'muted', style: { fontSize: '12px' } }, `고른 건물: ${st.sel.label || st.sel.id} — 붓 단위가 1칸이면 발자리 칸 단위, ½칸·¼칸이면 그 크기로 막기·열기 (파랑 = 걸을 수 있는 곳).`),
+          st.passTarget === 'object' && isBld(st.sel) && h('p', { class: 'muted', style: { fontSize: '12px' } }, `고른 건물: ${st.sel.label || st.sel.id} — 붓 단위(1칸·½칸·¼칸) 크기로 건물 막힘을 칠해요. 점선 = 모든 맵 공통값.`),
+          st.passTarget === 'object' && isBld(st.sel) && h('button', { class: 'btn small primary', onclick: () => saveBldPassToProps(st.sel) }, '💾 이 건물의 충돌 판정을 모든 맵의 같은 건물에 저장'),
           h('h4', {}, '붓 크기'),
           h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
           h('p', { class: 'muted', style: { fontSize: '12px' } }, '½칸·¼칸 붓은 칸보다 작게 막거나 열어요 (작은 분홍·파랑 네모). 게임에서 지나갈 수 있는지를 칸마다 보여 줘요. 빨강 = 자동으로 막힌 곳(물·건물·절벽 벽·난간·넓은 사물), 초록 = 다리·계단의 걷는 자리, 주황 원 = 나무·바위 밑동, 분홍 = 붓으로 막은 칸, 파랑 = 붓으로 연 칸. 자동 판정이 어색한 곳만 붓으로 막거나 여세요. 위쪽 [🚧 통행]을 켜면 다른 도구를 쓸 때도 보여요. 마우스: 왼쪽 = 목록에서 고른 것, 오른쪽 = 반대. 사물 둘레의 옅은 빨강 = 게임이 사람과 겹쳐 보이지 않게 ¼칸 더 막는 자리(그래서 사물 사이 틈은 ½칸보다 넓어야 지나가요).')),
