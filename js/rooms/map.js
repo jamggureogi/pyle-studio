@@ -250,6 +250,35 @@ async function editView(ctx, id) {
     if (po) for (let i = 0; i < P.length; i++) { if (po[i] === 1) P[i] = 2; else if (po[i] === 2) P[i] = 3; }
     return P;   // 0 열림, 1 막힘, 2 붓으로 엶, 3 붓으로 막음
   }
+  // 출입구 범위 (게임 field.gd _exit_zone 과 같은 계산, px). 사용자가 직접 정한 범위(area: [x, y, w, h] 칸)가 있으면 그것 — req_mwlwqm37gb1p
+  function exitZone(ev, P) {
+    if (Array.isArray(ev.area) && ev.area.length === 4) { const [ax, ay, aw, ah] = ev.area.map(Number); return { x: ax * TILE, y: ay * TILE, w: aw * TILE, h: ah * TILE, manual: true }; }
+    const { cols, rows } = M.map, H = M.map.heights || [], ht = (x, y) => H[y * cols + x] || 0;
+    const x = ev.x, y = ev.y;
+    let z = { x: x * TILE, y: y * TILE, w: TILE, h: TILE };
+    const horiz = y === 0 || y === rows - 1, vert = x === 0 || x === cols - 1;
+    if (horiz || vert) {
+      const [dx, dy] = horiz ? [1, 0] : [0, 1], reach = ev.reach ?? 2;
+      const bad = (qx, qy) => qx < 0 || qy < 0 || qx >= cols || qy >= rows || (P && (P[qy * cols + qx] === 1 || P[qy * cols + qx] === 3)) || ht(qx, qy) !== ht(x, y);
+      let lo = [x, y], hi = [x, y];
+      for (let i = 0; i < reach; i++) { const q = [lo[0] - dx, lo[1] - dy]; if (bad(q[0], q[1])) break; lo = q; }
+      for (let i = 0; i < reach; i++) { const q = [hi[0] + dx, hi[1] + dy]; if (bad(q[0], q[1])) break; hi = q; }
+      z = { x: lo[0] * TILE, y: lo[1] * TILE, w: (hi[0] - lo[0] + 1) * TILE, h: (hi[1] - lo[1] + 1) * TILE };
+      const half = TILE / 2;
+      if (horiz) z = { x: z.x, y: y === 0 ? 0 : rows * TILE - half, w: z.w, h: half };
+      else z = { x: x === 0 ? 0 : cols * TILE - half, y: z.y, w: half, h: z.h };
+    } else if (typeof ev.outward === 'string') {
+      const k = 0.5;
+      z = { down: { x: x * TILE, y: (y + 1 - k) * TILE, w: TILE, h: k * TILE }, up: { x: x * TILE, y: y * TILE, w: TILE, h: k * TILE },
+            left: { x: x * TILE, y: y * TILE, w: k * TILE, h: TILE }, right: { x: (x + 1 - k) * TILE, y: y * TILE, w: k * TILE, h: TILE } }[ev.outward] || z;
+    }
+    return z;
+  }
+  const HANDLE = 9;
+  function zoneHandles(z) {      // 크기 조절 손잡이 8개: [이름, x, y]
+    const mx = z.x + z.w / 2, my = z.y + z.h / 2, r = z.x + z.w, b = z.y + z.h;
+    return [['nw', z.x, z.y], ['n', mx, z.y], ['ne', r, z.y], ['e', r, my], ['se', r, b], ['s', mx, b], ['sw', z.x, b], ['w', z.x, my]];
+  }
   function drawPass(g) {
     const P = passGrid(), { cols, rows } = M.map;
     const col = ['', 'rgba(255,40,30,0.38)', 'rgba(60,130,255,0.38)', 'rgba(200,0,120,0.45)'];
@@ -518,6 +547,18 @@ async function editView(ctx, id) {
         g.fillRect(ev.x * TILE, ev.y * TILE, (ev.w || 1) * TILE, (ev.h || 1) * TILE); g.strokeRect(ev.x * TILE, ev.y * TILE, (ev.w || 1) * TILE, (ev.h || 1) * TILE); g.restore();
       }
     }
+    {   // 출입구 범위: 하늘색 = 게임이 계산한 범위, 초록 = 직접 정한 범위. 고른 출입구는 손잡이로 크기 조절 (req_mwlwqm37gb1p)
+      const P = passGrid();
+      for (const ev of M.map.events) {
+        if (ev.kind !== 'exit') continue;
+        const z = exitZone(ev, P), sel = st.sel === ev;
+        g.save(); g.fillStyle = z.manual ? 'rgba(60,220,120,0.22)' : 'rgba(60,190,255,0.20)'; g.strokeStyle = z.manual ? 'rgba(60,220,120,0.95)' : 'rgba(60,190,255,0.95)';
+        g.lineWidth = sel ? 4 : 2; g.setLineDash(sel ? [] : [8, 5]); g.fillRect(z.x, z.y, z.w, z.h); g.strokeRect(z.x, z.y, z.w, z.h);
+        if (sel) { g.setLineDash([]); g.fillStyle = '#fff'; g.strokeStyle = '#1b3a5a'; g.lineWidth = 2;
+          for (const [, hx, hy] of zoneHandles(z)) { g.fillRect(hx - HANDLE, hy - HANDLE, HANDLE * 2, HANDLE * 2); g.strokeRect(hx - HANDLE, hy - HANDLE, HANDLE * 2, HANDLE * 2); } }
+        g.restore();
+      }
+    }
     for (const ar of M.map.battleAreas || []) {
       if (!st.grid) break;
       g.save(); g.strokeStyle = 'rgba(255,80,200,0.9)'; g.lineWidth = 4; g.strokeRect(ar.x * TILE, ar.y * TILE, ar.w * TILE, ar.h * TILE);
@@ -535,7 +576,7 @@ async function editView(ctx, id) {
 
   // painting & placing
   const posOf = e => { const r = over.getBoundingClientRect(); return { x: (e.clientX - r.left) / st.zoom, y: (e.clientY - r.top) / st.zoom }; };
-  let painting = false, dragObj = null;
+  let painting = false, dragObj = null, evDrag = null;
   const paintAt = p => {
     const cr = Math.round(p.y / TILE), cc = Math.round(p.x / TILE), n = st.brush - 1;
     let changed = false;
@@ -601,9 +642,15 @@ async function editView(ctx, id) {
       if (st.passRect) { rectDrag = { a: p, b: p, mode: curMode }; overlay(); return; }
       painting = true; paintPass(p); return;
     }
+    if ((st.tool === 'event' || st.tool === 'select') && st.sel?.kind === 'exit') {     // 고른 출입구: 손잡이 = 크기, 범위 안 = 옮기기
+      const z = exitZone(st.sel, passGrid()), tol = HANDLE * 1.6 / Math.min(1, st.zoom);
+      const hd = zoneHandles(z).find(([, hx, hy]) => Math.abs(p.x - hx) <= tol && Math.abs(p.y - hy) <= tol);
+      if (hd) { evDrag = { ev: st.sel, mode: hd[0], z0: { ...z }, p0: p }; return; }
+      if (p.x >= z.x && p.x <= z.x + z.w && p.y >= z.y && p.y <= z.y + z.h) { evDrag = { ev: st.sel, mode: 'move', z0: { ...z }, p0: p, x0: st.sel.x, y0: st.sel.y }; return; }
+    }
     if (st.tool === 'event') {
       const hit = hitEvent(p);
-      if (hit) st.sel = hit;
+      if (hit) { st.sel = hit; evDrag = { ev: hit, mode: 'move', p0: p, x0: hit.x, y0: hit.y, z0: hit.kind === 'exit' ? exitZone(hit, passGrid()) : null }; }
       else {
         const ev = { id: `ev_${Date.now().toString(36)}`, kind: 'trigger', x: Math.floor(p.x / TILE), y: Math.floor(p.y / TILE), label: '새 이벤트' };
         M.map.events.push(ev); st.sel = ev; markDirty();
@@ -625,9 +672,27 @@ async function editView(ctx, id) {
     if (painting) (st.tool === 'height' ? paintHeight : st.tool === 'blend' ? paintBlend : st.tool === 'pass' ? paintPass : paintAt)(p);
     if (dragObj) { dragObj.o.x = Math.round(p.x + dragObj.dx); dragObj.o.y = Math.round(p.y + dragObj.dy); markDirty(); overlay(); }
     if (rectDrag) { rectDrag.b = p; overlay(); }
+    if (evDrag) {
+      const d = evDrag, ev = d.ev, q = v => Math.round(v / (TILE / 4)) * (TILE / 4) / TILE;      // ¼칸 단위
+      if (d.mode === 'move') {
+        const nx = Math.max(0, Math.min(M.map.cols - 1, d.x0 + Math.round((p.x - d.p0.x) / TILE))), ny = Math.max(0, Math.min(M.map.rows - 1, d.y0 + Math.round((p.y - d.p0.y) / TILE)));
+        if (nx !== ev.x || ny !== ev.y || (Array.isArray(ev.area) && d.z0)) {
+          if (Array.isArray(ev.area) && d.z0) ev.area = [q(d.z0.x + (nx - d.x0) * TILE), q(d.z0.y + (ny - d.y0) * TILE), ev.area[2], ev.area[3]];
+          ev.x = nx; ev.y = ny; markDirty(); overlay(); drawProps();
+        }
+      } else {
+        let { x, y, w, h: hh } = d.z0, r = x + w, b = y + hh;
+        if (d.mode.includes('w')) x = Math.min(p.x, r - TILE / 4);
+        if (d.mode.includes('e')) r = Math.max(p.x, x + TILE / 4);
+        if (d.mode.includes('n')) y = Math.min(p.y, b - TILE / 4);
+        if (d.mode.includes('s')) b = Math.max(p.y, y + TILE / 4);
+        ev.area = [q(x), q(y), Math.max(0.25, q(r) - q(x)), Math.max(0.25, q(b) - q(y))];
+        markDirty(); overlay(); drawProps();
+      }
+    }
   });
   over.addEventListener('pointerup', () => {
-    painting = false; dragObj = null;
+    painting = false; dragObj = null; evDrag = null;
     if (rectDrag) {                                         // 사각형 안 전체를 한 번에 막기·열기
       const r = rectDrag; rectDrag = null;
       const step = st.passTarget === 'object' ? (isBld(st.sel) ? TILE : Math.max(FINE, st.passCell < TILE ? st.passCell : FINE)) : st.passCell;
@@ -710,6 +775,24 @@ async function editView(ctx, id) {
         h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: () => resizeMap(ctx) }, '크기 바꾸기'), h('button', { class: 'btn small', onclick: () => newMap(ctx) }, '+ 새 맵'))));
   }
 
+  // 출입구 범위 칸 (req_mwlwqm37gb1p): 자동(게임 계산) ↔ 직접 정하기, 숫자로도 고침
+  function exitAreaBox(s) {
+    const z = exitZone(s, passGrid()), manual = !!z.manual;
+    const nums = ['x', 'y', 'w', 'h'].map((k, i) => {
+      const inp = h('input', { type: 'number', step: 0.25, min: i >= 2 ? 0.25 : 0, class: 'num', value: +(([z.x, z.y, z.w, z.h][i]) / TILE).toFixed(2), disabled: !manual });
+      inp.oninput = () => { const a = [...s.area]; a[i] = Math.max(i >= 2 ? 0.25 : 0, Number(inp.value) || 0); s.area = a; markDirty(); overlay(); };
+      return h('label', { class: 'field' }, h('span', {}, ['왼쪽 칸', '위 칸', '가로 칸', '세로 칸'][i]), inp);
+    });
+    const toggle = h('button', { class: 'btn small', onclick: () => {
+      if (manual) delete s.area; else s.area = [z.x / TILE, z.y / TILE, z.w / TILE, z.h / TILE].map(v => +v.toFixed(2));
+      markDirty(); overlay(); drawProps();
+    } }, manual ? '↺ 게임 자동 범위로 되돌리기' : '✎ 범위 직접 정하기');
+    return h('div', { class: 'card', style: { padding: '8px', margin: '6px 0', fontSize: '13px' } },
+      h('b', {}, '출구 범위 '), h('span', { class: 'muted' }, manual ? '(직접 정함 — 초록 네모)' : '(게임이 계산 — 하늘색 네모)'),
+      h('div', { class: 'row', style: { flexWrap: 'wrap', gap: '4px' } }, ...nums),
+      h('div', { class: 'muted', style: { fontSize: '12px', margin: '4px 0' } }, '맵에서 출구를 고른 뒤 네모 안을 끌면 옮기고, 흰 손잡이를 끌면 크기가 바뀌어요(¼칸 단위). 손잡이를 끌면 직접 정한 범위가 돼요.'),
+      toggle);
+  }
   function drawProps() {
     const s = st.sel;
     if (!s) { fill(props, h('div', { class: 'muted', style: { fontSize: '13px' } }, '선택한 것이 없어요.')); return; }
@@ -752,6 +835,7 @@ async function editView(ctx, id) {
         s.kind === 'zone' && h('p', { class: 'muted', style: { fontSize: '12px' } }, '주황 네모 안을 밟으면 장면이 한 번 열려요 (예: 마물과 마주침).'),
         s.kind === 'exit' && h('label', { class: 'field' }, h('span', {}, '이동할 맵'), toMap),
         s.kind === 'exit' && h('label', { class: 'field' }, h('span', {}, '도착할 시작 위치'), toStart),
+        s.kind === 'exit' && exitAreaBox(s),
         s.kind === 'exit' && s.conditions && h('div', { class: 'muted', style: { fontSize: '12px' } }, `나갈 수 있는 조건: ${Object.entries(s.conditions).map(([k, v]) => `${k}=${v}`).join(', ')}`),
         s.scene && h('a', { href: `#/story/edit/${s.scene}` }, '스토리룸에서 이 장면 열기 →'),
         h('div', { class: 'row', style: { marginTop: '8px' } }, del));
