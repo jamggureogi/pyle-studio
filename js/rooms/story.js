@@ -188,6 +188,7 @@ function flowTree(ctx, sel) {
       h('button', { class: 'btn small primary', onclick: async () => {
         if (!await confirmBox(`🤖 Claude가 새로 쓴 대사 ${byClaude.length}개를 모두 확인한 것으로 표시할까요?`, '모두 확인')) return;
         for (const x of byClaude) { delete x.claudeNote; markDirty(x.id); }
+        ackStoryLines(ctx, FILE, null);          // 고친 대사 모아 보기에서도 이 장 대사를 뺌 (사용자 req_mwm6dq3uj3y8)
         rerender(ctx, sel);
         toast(`${byClaude.length}개 모두 확인 표시를 했어요. [저장]을 누르면 반영돼요.`);
       } }, '모두 확인했어요')),
@@ -307,7 +308,7 @@ function sceneEditor(ctx, id) {
     rerender(ctx, S.story.flow[0]?.id);
   };
 
-  const ack = () => { delete s.claudeNote; change(); rerender(ctx, id); toast('확인 표시를 했어요. [저장]을 누르면 반영돼요.'); };
+  const ack = () => { delete s.claudeNote; ackStoryLines(ctx, FILE, [s.id]); change(); rerender(ctx, id); toast('확인 표시를 했어요. [저장]을 누르면 반영돼요.'); };
   const claudeBox = s.claudeNote && h('div', { class: 'card claude-note' },
     h('div', { class: 'row' }, h('b', {}, '🤖 Claude가 새로 쓴 대사예요'), h('span', { class: 'spacer' }), h('button', { class: 'btn small primary', onclick: ack }, '확인했어요')),
     h('p', { style: { margin: '6px 0 0', fontSize: '14px' } }, s.claudeNote.text || ''),
@@ -863,40 +864,66 @@ async function cgGalleryPanel(ctx) {
 // data/story_changes.json (pyle_claude tools/story_changes.py 가 git 기록에서 만든다): 고치기 전 → 지금 문장, 장면별
 async function changesPanel(ctx) {
   const box = h('div', {});
-  const [res, ch] = await Promise.all([ctx.store.getJSON('data/story_changes.json', null), ctx.store.getJSON(CHARS, { characters: [] })]);
+  const [res, ch, ackRes] = await Promise.all([ctx.store.getJSON('data/story_changes.json', null), ctx.store.getJSON(CHARS, { characters: [] }), ctx.store.getJSON(ACK_FILE, { acked: {} })]);
   const data = res && res.data;
   if (!data || !Array.isArray(data.items)) {
     box.append(h('p', { class: 'muted' }, '아직 모아 둔 자료가 없어요. (Claude가 tools/story_changes.py 를 돌리면 생겨요)'));
     return box;
   }
+  const acked = (ackRes.data && ackRes.data.acked) || {};
   const names = {};
   for (const c of (ch.data?.characters || [])) names[c.id] = c.name || c.id;
-  const who = h('select', {}, ['전체', 'Claude', '작가', '감독', '사용자'].map(w => h('option', { value: w }, w === '전체' ? '누가 고쳤든 전체' : w + '가 고친 것')));
-  const kind = h('select', {}, [['edit', '고친 대사만'], ['all', '고친 대사 + 새 대사'], ['new', '새로 쓴 대사만']].map(([v, t]) => h('option', { value: v }, t)));
+  // 사용자 req_mwm6dq3uj3y8: Claude(작가·감독 포함)가 새로 쓰거나 고친 대사만, 확인한 것은 목록에서 빠짐 (그 뒤 다시 바뀌면 다시 나옴)
+  const lastWho = e => (e.history[e.history.length - 1] || {}).who;
+  const who = h('select', {}, [['claude', 'Claude가 쓰거나 고친 것 (확인 안 한 것만)'], ['Claude', 'Claude(메인·맵)'], ['작가', '작가'], ['감독', '감독'], ['done', '이미 확인한 것']].map(([v, t]) => h('option', { value: v }, t)));
+  const kind = h('select', {}, [['all', '새 대사 + 고친 대사'], ['edit', '고친 대사만'], ['new', '새로 쓴 대사만']].map(([v, t]) => h('option', { value: v }, t)));
   const fileSel = h('select', {}, [['all', '모든 장'], ['data/story/prologue.json', '프롤로그'], ['data/story/chapter1.json', '1장'], ['data/story/chapter2.json', '2장']].map(([v, t]) => h('option', { value: v }, t)));
   const q = h('input', { class: 'search', placeholder: '대사 검색' });
   const list = h('div', {});
+  const isAcked = e => acked[e.id] === e.text;
+  const ackItems = async (items, label) => {
+    if (!items.length) return;
+    try {
+      await ctx.store.updateJSON(ACK_FILE, d => { d.acked ||= {}; for (const e of items) d.acked[e.id] = e.text; return d; }, `고친 대사 확인: ${label} ${items.length}줄`, { acked: {} });
+      for (const e of items) acked[e.id] = e.text;
+      toast(`${items.length}줄 확인했어요. 목록에서 빠졌어요.`);
+      draw();
+    } catch (err) { toast(`저장하지 못했어요 (${err.message})`, true); }
+  };
+  let shown = [];
   const draw = () => {
     list.innerHTML = '';
     const term = q.value.trim();
-    let items = data.items.filter(e =>
+    shown = data.items.filter(e =>
+      lastWho(e) !== '사용자' &&
+      (who.value === 'done' ? isAcked(e) : !isAcked(e)) &&
       (fileSel.value === 'all' || e.file === fileSel.value) &&
-      (who.value === '전체' || e.history.some(x => x.who === who.value)) &&
+      (['claude', 'done'].includes(who.value) || e.history.some(x => x.who === who.value)) &&
       (kind.value === 'all' || (kind.value === 'new' ? e.original == null : e.original != null)) &&
       (!term || (e.text || '').includes(term) || (e.original || '').includes(term)));
-    list.append(h('p', { class: 'muted' }, `${items.length}줄 · 최근 ${data.days}일 동안 바뀐 대사 (지금 대본 기준)`));
+    list.append(h('div', { class: 'row', style: { alignItems: 'center', gap: '8px' } },
+      h('p', { class: 'muted', style: { margin: 0 } }, who.value === 'done' ? `이미 확인한 대사 ${shown.length}줄` : `확인할 대사 ${shown.length}줄 · 최근 ${data.days}일 동안 Claude가 새로 쓰거나 고친 대사`),
+      h('span', { class: 'spacer' }),
+      who.value !== 'done' && shown.length > 0 && h('button', { class: 'btn small primary', onclick: async () => {
+        if (!await confirmBox(`지금 보이는 ${shown.length}줄을 모두 확인한 것으로 할까요? 목록에서 빠져요.`, '모두 확인')) return;
+        ackItems([...shown], '모두');
+      } }, `보이는 ${shown.length}줄 모두 확인했어요`)));
     let curScene = null;
-    for (const e of items) {
+    for (const e of shown) {
       if (e.scene !== curScene) {
         curScene = e.scene;
+        const sceneItems = shown.filter(x => x.scene === e.scene);
         const go = h('a', { href: `#/story/edit/${e.scene}`, onclick: () => { localStorage.setItem('pyle.storyFile', e.file); FILE = e.file; S = null; } }, '장면 열기 →');
-        list.append(h('h3', { style: { marginTop: '18px' } }, `${e.title || e.scene} `, h('span', { class: 'muted', style: { fontSize: '13px', fontWeight: 'normal' } }, e.scene, ' · '), go));
+        list.append(h('h3', { style: { marginTop: '18px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } }, `${e.title || e.scene} `, h('span', { class: 'muted', style: { fontSize: '13px', fontWeight: 'normal' } }, e.scene, ' · '), go,
+          who.value !== 'done' && h('button', { class: 'btn small', onclick: () => ackItems(sceneItems, e.scene) }, `이 장면 확인했어요 (${sceneItems.length})`)));
       }
       const spk = e.name || names[e.speaker] || e.speaker || '';
       const last = e.history[e.history.length - 1] || {};
       const row = h('div', { class: 'card', style: { padding: '10px 12px', margin: '6px 0' } },
-        h('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '4px' } },
-          `${spk} · ${e.original == null ? '새 대사' : '고친 대사'} · ${last.at || ''} ${last.who || ''}${e.history.length > 1 ? ` (${e.history.length}번 바뀜)` : ''}`),
+        h('div', { class: 'row muted', style: { fontSize: '12px', marginBottom: '4px' } },
+          h('span', {}, `${spk} · ${e.original == null ? '새 대사' : '고친 대사'} · ${last.at || ''} ${last.who || ''}${e.history.length > 1 ? ` (${e.history.length}번 바뀜)` : ''}`),
+          h('span', { class: 'spacer' }),
+          who.value !== 'done' && h('button', { class: 'btn small', onclick: () => ackItems([e], e.id) }, '확인')),
         e.original != null && h('div', { style: { textDecoration: 'line-through', color: '#9a8f80', marginBottom: '4px' } }, e.original),
         h('div', {}, e.text));
       if (e.history.length > 1) {
@@ -909,8 +936,19 @@ async function changesPanel(ctx) {
   };
   for (const el of [who, kind, fileSel]) el.onchange = draw;
   q.oninput = draw;
-  box.append(h('p', { class: 'sub' }, 'Claude·작가·감독이 다시 쓰거나 새로 쓴 대사를 한곳에서 봐요. 줄 그은 글이 고치기 전, 아래가 지금 대사예요. 고칠 곳은 「장면 열기」로 가서 바로 고치면 돼요.'),
+  box.append(h('p', { class: 'sub' }, 'Claude가 새로 쓰거나 고친 대사 중 아직 확인하지 않은 것만 모았어요. 줄 그은 글이 고치기 전, 아래가 지금 대사예요. 읽은 것은 [확인]을 누르면 목록에서 빠져요(다시 고쳐지면 다시 나와요). 스토리 목록의 🤖 [모두 확인했어요]를 눌러도 그 장의 대사가 여기서 빠져요.'),
     h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } }, fileSel, who, kind, q), list);
   draw();
   return box;
+}
+
+// 확인한 대사 기록 (data/story_ack.json {acked: {대사 id: 확인할 때의 글}}) — 스토리 목록의 '모두 확인했어요'·장면 '확인했어요'도 여기에 함께 적음
+const ACK_FILE = 'data/story_ack.json';
+async function ackStoryLines(ctx, file, sceneIds) {
+  try {
+    const res = await ctx.store.getJSON('data/story_changes.json', null);
+    const items = (res?.data?.items || []).filter(e => e.file === file && (!sceneIds || sceneIds.includes(e.scene)));
+    if (!items.length) return;
+    await ctx.store.updateJSON(ACK_FILE, d => { d.acked ||= {}; for (const e of items) d.acked[e.id] = e.text; return d; }, `고친 대사 확인: ${sceneIds ? sceneIds.join(',') : file} ${items.length}줄`, { acked: {} });
+  } catch (e) { /* 모아 보기 기록만 못 남긴 것 — 대본 확인 표시는 그대로 */ }
 }

@@ -37,8 +37,11 @@ export async function render(ctx, rest) {
 function card(ctx, it, tab) {
   const el = h('div', { class: 'card review-card' });
   const fb = it.feedback || {};
-  let verdict = fb.verdict || null;
   let editing = it.status === '확인 대기';
+  // 이미 피드백을 보낸 항목을 팀이 다시 '확인 대기'로 올린 경우: 지난 피드백은 위에 '지난번에 보낸 의견'으로만 보이고,
+  // 입력 칸은 비워 둠 — 예전 글이 '안 보낸 초안'처럼 보이던 문제 (사용자 req_mwm6pvvd7m57)
+  const prevFb = (editing && fb.at) ? { ...fb } : null;
+  let verdict = prevFb ? null : (fb.verdict || null);
   const closed = it.status === '반영됨' || it.status === '지난 내용';
   // 그림 없이 글로만 보고한 항목은 깨진 그림 대신 아무것도 안 보이게 (사용자 RV-424·970 "미리보기 이미지가 깨져서")
   const imgBox = it.file ? h('div', { class: 'review-img' }, h('span', { class: 'muted' }, '불러오는 중…')) : null;
@@ -50,14 +53,14 @@ function card(ctx, it, tab) {
   let typed = null;          // 쓰던 의견 — 좋아요/고쳐 주세요를 눌러 다시 그려도 지워지지 않게 (사용자 11/16)
   const draw = () => {
     const comment = h('textarea', { rows: 3, placeholder: '의견 (선택) — 좋은 점, 고칠 점, 원하는 방향을 자유롭게', disabled: !editing });
-    comment.value = typed ?? fb.comment ?? '';
+    comment.value = typed ?? (prevFb ? '' : (fb.comment ?? ''));
     comment.addEventListener('input', () => { typed = comment.value; });
     const vbtn = (v, label) => h('button', { class: `btn ${verdict === v ? 'primary' : ''}`, disabled: !editing, onclick: () => { verdict = v; draw(); } }, label);
     const submit = async () => {
       if (!verdict && !comment.value.trim()) return toast('좋아요/고쳐 주세요를 고르거나 의견을 적어 주세요.', true);
       const feedback = { verdict, comment: comment.value.trim(), at: new Date().toISOString() };
       try {
-        await ctx.store.updateJSON(FILE, d => { const x = d.items.find(y => y.id === it.id); if (x) { x.feedback = feedback; x.status = '피드백'; } return d; }, `확인 피드백: ${it.id} ${it.title}`, { items: [] });
+        await ctx.store.updateJSON(FILE, d => { const x = d.items.find(y => y.id === it.id); if (x) { if (x.feedback && x.feedback.at && x.feedback.at !== feedback.at) (x.feedbackHistory ||= []).push(x.feedback); x.feedback = feedback; x.status = '피드백'; } return d; }, `확인 피드백: ${it.id} ${it.title}`, { items: [] });
         Object.assign(it, { feedback, status: '피드백' }); Object.assign(fb, feedback); typed = null;
         toast('피드백을 보냈어요.');
         ctx.refreshBadges();
@@ -86,13 +89,14 @@ function card(ctx, it, tab) {
       imgBox,
       extraBox,
       it.desc && h('p', { style: { fontSize: '14px', margin: '10px 0' } }, it.desc),
+      prevFb && h('p', { class: 'muted', style: { fontSize: '13px', borderLeft: '3px solid #8aa', paddingLeft: '8px' } }, `지난번에 보낸 의견 (${fmtDate(prevFb.at)} 제출됨): ${prevFb.verdict || ''}${prevFb.comment ? ' — ' + prevFb.comment : ''}`),
       !closed && h('div', { class: 'row' }, vbtn('좋아요', '👍 좋아요'), vbtn('고쳐 주세요', '✏️ 고쳐 주세요')),
       !closed && h('label', { class: 'field', style: { marginTop: '8px' } }, comment),
       closed && fb.verdict && h('p', { class: 'muted', style: { fontSize: '13px' } }, `내 피드백: ${fb.verdict}${fb.comment ? ' — ' + fb.comment : ''}`),
       it.response && h('div', { class: 'resp' }, h('b', {}, '💬 Claude: '), it.response),
       !closed && h('div', { class: 'row' },
         editing ? h('button', { class: 'btn primary', onclick: submit }, '제출') : h('button', { class: 'btn', onclick: () => { editing = true; draw(); } }, '고치기'),
-        fb.at && !editing && h('span', { class: 'muted', style: { fontSize: '12px' } }, `${fmtDate(fb.at)} 제출`)));
+        fb.at && !editing && !prevFb && h('span', { class: 'muted', style: { fontSize: '12px' } }, `${fmtDate(fb.at)} 제출`)));
   };
   draw();
   return el;

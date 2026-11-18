@@ -464,9 +464,11 @@ async function editView(ctx, id) {
   const inFoot = (b, p) => p.x >= b.x * TILE && p.x < (b.x + b.w) * TILE && p.y >= b.y * TILE && p.y < (b.y + b.h) * TILE;
   const hitBuilding = p => (M.map.buildings || []).find(b => inFoot(b, p)) || [...(M.map.buildings || [])].sort((a, b) => (b.y + b.h) - (a.y + a.h)).find(b => { const r = bldBox(b); return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; });
   const isBld = s => s && (M.map.buildings || []).includes(s);
+  const inFootOrBox = (b, p) => { if (inFoot(b, p)) return true; const r = bldBox(b); return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; };
   let curMode = 2, rectDrag = null;
   const paintPass = p => {
-    if (st.passTarget === 'object') return isBld(st.sel) ? paintBuildingPass(st.sel, p) : paintObjPass(p);
+    // 건물에 ½칸·¼칸 단위: 건물 막힘은 칸 단위라, 칸보다 작은 단위는 맵의 섬세한 통행(passFine)으로 칠함 — 게임에서 건물 막힌 칸 위의 열기 조각도 그대로 열림 (사용자 req_mwm6mirang0q)
+    if (st.passTarget === 'object') return isBld(st.sel) ? (st.passCell < TILE ? (inFootOrBox(st.sel, p) && paintPassFine(p)) : paintBuildingPass(st.sel, p)) : paintObjPass(p);
     if (st.passCell < TILE) return paintPassFine(p);
     const { cols, rows } = M.map, cr = Math.floor(p.y / TILE), cc = Math.floor(p.x / TILE), n = st.brush - 1;
     M.map.passOverride ||= new Array(cols * rows).fill(0);
@@ -711,7 +713,7 @@ async function editView(ctx, id) {
     painting = false; dragObj = null; evDrag = null;
     if (rectDrag) {                                         // 사각형 안 전체를 한 번에 막기·열기
       const r = rectDrag; rectDrag = null;
-      const step = st.passTarget === 'object' ? (isBld(st.sel) ? TILE : Math.max(FINE, st.passCell < TILE ? st.passCell : FINE)) : st.passCell;
+      const step = st.passTarget === 'object' ? (isBld(st.sel) ? st.passCell : Math.max(FINE, st.passCell < TILE ? st.passCell : FINE)) : st.passCell;
       const x0 = Math.min(r.a.x, r.b.x), x1 = Math.max(r.a.x, r.b.x), y0 = Math.min(r.a.y, r.b.y), y1 = Math.max(r.a.y, r.b.y);
       const keep = st.brush; st.brush = 1; curMode = r.mode;
       for (let y = Math.floor(y0 / step) * step + step / 2; y <= y1 + step / 2; y += step)
@@ -798,7 +800,7 @@ async function editView(ctx, id) {
             : isBld(st.sel) ? '' : '먼저 맵에서 사물이나 건물(신전처럼 큰 건물도)을 눌러 고르세요. 고른 것은 노란 점선 테두리로 보여요.'),
           st.passTarget === 'object' && st.sel && st.sel.blockCells && h('button', { class: 'btn small', onclick: () => { for (const o2 of M.map.objects) if (o2.file === st.sel.file) { delete o2.blockCells; delete o2.block; delete o2.collide; } markDirty(); overlay(); drawSide(); } }, '↺ 이 그림의 막힘을 기본으로'),
           st.passTarget === 'object' && st.sel && M.map.objects.includes(st.sel) && st.sel.block && h('button', { class: 'btn small primary', onclick: () => saveObjPassToProps(st.sel) }, '💾 이 사물의 충돌 판정을 모든 맵의 같은 그림에 저장'),
-          st.passTarget === 'object' && isBld(st.sel) && h('p', { class: 'muted', style: { fontSize: '12px' } }, `고른 건물: ${st.sel.label || st.sel.id} — 건물은 발자리 칸 단위로 막기·열기 (파랑 = 걸을 수 있는 마당 칸).`),
+          st.passTarget === 'object' && isBld(st.sel) && h('p', { class: 'muted', style: { fontSize: '12px' } }, `고른 건물: ${st.sel.label || st.sel.id} — 붓 단위가 1칸이면 발자리 칸 단위, ½칸·¼칸이면 그 크기로 막기·열기 (파랑 = 걸을 수 있는 곳).`),
           h('h4', {}, '붓 크기'),
           h('div', { class: 'tool-row' }, [1, 2, 3, 4].map(n => h('button', { class: `btn small ${st.brush === n ? 'primary' : ''}`, onclick: () => { st.brush = n; drawSide(); } }, n))),
           h('p', { class: 'muted', style: { fontSize: '12px' } }, '½칸·¼칸 붓은 칸보다 작게 막거나 열어요 (작은 분홍·파랑 네모). 게임에서 지나갈 수 있는지를 칸마다 보여 줘요. 빨강 = 자동으로 막힌 곳(물·건물·절벽 벽·난간·넓은 사물), 초록 = 다리·계단의 걷는 자리, 주황 원 = 나무·바위 밑동, 분홍 = 붓으로 막은 칸, 파랑 = 붓으로 연 칸. 자동 판정이 어색한 곳만 붓으로 막거나 여세요. 위쪽 [🚧 통행]을 켜면 다른 도구를 쓸 때도 보여요. 마우스: 왼쪽 = 목록에서 고른 것, 오른쪽 = 반대. 사물 둘레의 옅은 빨강 = 게임이 사람과 겹쳐 보이지 않게 ¼칸 더 막는 자리(그래서 사물 사이 틈은 ½칸보다 넓어야 지나가요).')),
