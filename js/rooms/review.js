@@ -40,8 +40,13 @@ function card(ctx, it, tab) {
   let verdict = fb.verdict || null;
   let editing = it.status === '확인 대기';
   const closed = it.status === '반영됨' || it.status === '지난 내용';
-  const imgBox = h('div', { class: 'review-img' }, h('span', { class: 'muted' }, '불러오는 중…'));
-  ctx.store.blobUrl(it.file).then(u => imgBox.replaceChildren(h('img', { src: u, onclick: () => zoom(u) }))).catch(() => imgBox.replaceChildren(h('span', { class: 'muted' }, '그림을 불러오지 못했어요')));
+  // 그림 없이 글로만 보고한 항목은 깨진 그림 대신 아무것도 안 보이게 (사용자 RV-424·970 "미리보기 이미지가 깨져서")
+  const imgBox = it.file ? h('div', { class: 'review-img' }, h('span', { class: 'muted' }, '불러오는 중…')) : null;
+  // 그림이 여러 장인 항목(files): 첫 장 아래에 나머지도 보여 줌
+  const extra = (it.files || []).filter(f => f && f !== it.file);
+  const extraBox = extra.length ? h('div', { class: 'review-img' }) : null;
+  for (const f of extra) ctx.store.blobUrl(f).then(u => extraBox.append(h('img', { src: u, style: { marginTop: '8px' }, onclick: () => zoom(u) }))).catch(() => {});
+  if (it.file) ctx.store.blobUrl(it.file).then(u => imgBox.replaceChildren(h('img', { src: u, onclick: () => zoom(u) }))).catch(() => imgBox.replaceChildren(h('span', { class: 'muted' }, `그림을 불러오지 못했어요 (${it.file})`)));
   let typed = null;          // 쓰던 의견 — 좋아요/고쳐 주세요를 눌러 다시 그려도 지워지지 않게 (사용자 11/16)
   const draw = () => {
     const comment = h('textarea', { rows: 3, placeholder: '의견 (선택) — 좋은 점, 고칠 점, 원하는 방향을 자유롭게', disabled: !editing });
@@ -79,6 +84,7 @@ function card(ctx, it, tab) {
         it.replacedBy && h('span', { class: 'muted', style: { fontSize: '12px' } }, `→ ${it.replacedBy}`)),
       h('div', { class: 'muted', style: { fontSize: '12px', margin: '2px 0 8px' } }, it.createdAt),
       imgBox,
+      extraBox,
       it.desc && h('p', { style: { fontSize: '14px', margin: '10px 0' } }, it.desc),
       !closed && h('div', { class: 'row' }, vbtn('좋아요', '👍 좋아요'), vbtn('고쳐 주세요', '✏️ 고쳐 주세요')),
       !closed && h('label', { class: 'field', style: { marginTop: '8px' } }, comment),
@@ -87,7 +93,6 @@ function card(ctx, it, tab) {
       !closed && h('div', { class: 'row' },
         editing ? h('button', { class: 'btn primary', onclick: submit }, '제출') : h('button', { class: 'btn', onclick: () => { editing = true; draw(); } }, '고치기'),
         fb.at && !editing && h('span', { class: 'muted', style: { fontSize: '12px' } }, `${fmtDate(fb.at)} 제출`)));
-    imgBox.isConnected || null;
   };
   draw();
   return el;
