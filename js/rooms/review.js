@@ -1,5 +1,5 @@
 // Review room: images Claude wants the user to look at, with feedback per image.
-import { h, toast, fmtDate, fill, paged } from '../ui.js';
+import { h, toast, fmtDate, fill, paged, confirmBox } from '../ui.js';
 
 const FILE = 'data/review.json';
 
@@ -30,7 +30,7 @@ export async function render(ctx, rest) {
       h('a', { href: '#/review/sent', class: tab === 'sent' ? 'on' : '' }, `피드백 보냄 · 반영 대기 (${groups.sent.length})`),
       h('a', { href: '#/review/done', class: tab === 'done' ? 'on' : '' }, `반영됨 (${groups.done.length})`),
       h('a', { href: '#/review/old', class: tab === 'old' ? 'on' : '' }, `지난 내용 (${groups.old.length})`)),
-    tab === 'old' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '새 버전이 나와서 답하지 않아도 되는 항목이에요. 궁금한 점은 새 항목으로 옮겨 두었어요.'),
+    tab === 'old' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '새 버전이 나와서 답하지 않아도 되는 항목, 그리고 [🗑 지우기]로 지운 항목이에요. 팀들은 여기 있는 항목을 더 처리하지 않아요.'),
     list);
 }
 
@@ -60,8 +60,21 @@ function card(ctx, it, tab) {
         editing = false; draw();
       } catch (e) { toast(`보내지 못했어요 (${e.message}). 적은 의견은 그대로 있어요 — 다시 눌러 주세요.`, true); }
     };
+    // 지우기 (사용자 req_mwlja6277bcb): 이미 지나간 안건이거나 다른 곳에서 의견을 냈다는 뜻 → '지난 내용'으로 옮기고 팀들은 더 손대지 않음
+    const dismiss = async () => {
+      if (!await confirmBox('이 안건을 지울까요? \'지난 내용\' 탭으로 옮겨지고, 팀들은 이 안건을 더 처리하지 않아요.', '지우기')) return;
+      const at = new Date().toISOString();
+      try {
+        await ctx.store.updateJSON(FILE, d => { const x = d.items.find(y => y.id === it.id); if (x) { x.prevStatus = x.status; x.status = '지난 내용'; x.dismissed = { by: '사용자', at }; } return d; }, `확인 지우기: ${it.id} ${it.title}`, { items: [] });
+        Object.assign(it, { prevStatus: it.status, status: '지난 내용', dismissed: { by: '사용자', at } });
+        toast('지웠어요. \'지난 내용\' 탭에 남아 있어요.');
+        ctx.refreshBadges();
+        el.classList.add('leaving'); setTimeout(() => window.dispatchEvent(new HashChangeEvent('hashchange')), 450);
+      } catch (e) { toast(`지우지 못했어요 (${e.message}).`, true); }
+    };
     fill(el,
       h('div', { class: 'row' }, h('span', { class: 'did' }, it.id), h('h2', { style: { margin: 0, flex: 1 } }, it.title),
+        it.status !== '지난 내용' && h('button', { class: 'btn small', title: '이미 지나간 안건이거나 다른 곳에서 의견을 낸 것 — 지난 내용으로 옮겨요', onclick: dismiss }, '🗑 지우기'),
         h('span', { class: `badge ${it.status === '반영됨' ? 'ok' : it.status === '피드백' ? 'info' : it.status === '지난 내용' ? '' : 'warn'}` }, it.status),
         it.replacedBy && h('span', { class: 'muted', style: { fontSize: '12px' } }, `→ ${it.replacedBy}`)),
       h('div', { class: 'muted', style: { fontSize: '12px', margin: '2px 0 8px' } }, it.createdAt),
