@@ -10,6 +10,11 @@ const TILE = 64;
 const INDEX = 'data/maps/index.json';
 const TERRAINS = 'data/terrains.json';
 const STORY = 'data/story/prologue.json';
+let OBJ_USE = null, OBJ_USE_DONE = false, OBJ_USE_MAP = new Map();      // 사물 그림 → 그 그림이 놓인 맵 id 들 (모든 맵을 한 번만 읽음)
+function objectUsage(ctx, list) {
+  return Promise.all(list.map(m => ctx.store.getJSON(`data/maps/${m.id}.json`).then(f => [m.id, (f.data.objects || []).map(o => o.file)]).catch(() => [m.id, []])))
+    .then(rows => { const u = new Map(); for (const [mid, files] of rows) for (const f of files) { if (!u.has(f)) u.set(f, new Set()); u.get(f).add(mid); } OBJ_USE_MAP = u; return u; });
+}
 const EVENT_KINDS = { trigger: '이벤트 지점', npc: 'NPC', exit: '출입구', zone: '구역 (밟으면 장면)', enter: '맵에 들어오면 (첫 장면)', mark: '이름표 (카메라 이동용)', chest: '보물상자', battle: '전투 지점', start: '시작 위치' };
 const EVENT_ICON = { trigger: '★', npc: '☺', exit: '⇥', zone: '▦', enter: '◉', mark: '⚑', chest: '▣', battle: '⚔', start: '▶' };
 const FEEDBACK = 'data/requests.json';
@@ -705,6 +710,30 @@ async function editView(ctx, id) {
   });
   over.addEventListener('contextmenu', e => { if (st.tool === 'pass') e.preventDefault(); });
 
+  // 사물 목록 (사용자 req_mwlwxmeh7bgk): 목록만 따로 스크롤, 이 맵에 놓인 것 → 다른 맵에 놓인 것 → 아무 데도 안 놓인 것 순서
+  function objLibrary(objAssets) {
+    const hereCount = new Map();
+    for (const o of M.map.objects) hereCount.set(o.file, (hereCount.get(o.file) || 0) + 1);
+    const byFile = new Map(objAssets.map(a => [a.file, a]));
+    for (const f of hereCount.keys()) if (!byFile.has(f)) byFile.set(f, { id: f.split('/').pop().replace(/\.[a-z]+$/, ''), file: f });
+    const all = [...byFile.values()];
+    if (!OBJ_USE) OBJ_USE = objectUsage(ctx, M.list);
+    if (!OBJ_USE_DONE) OBJ_USE.then(() => { OBJ_USE_DONE = true; if (st.tool === 'object') drawSide(); });
+    const use = OBJ_USE_DONE ? OBJ_USE_MAP : null;
+    const elsewhere = f => use && [...(use.get(f) || [])].some(m => m !== M.id);
+    const here = all.filter(a => hereCount.has(a.file)).sort((x, y) => hereCount.get(y.file) - hereCount.get(x.file));
+    const other = all.filter(a => !hereCount.has(a.file) && elsewhere(a.file));
+    const none = all.filter(a => !hereCount.has(a.file) && !elsewhere(a.file));
+    const card = (a, note) => h('div', { class: `thumb-card ${st.objFile === a.file ? 'on' : ''}`, onclick: () => { st.objFile = a.file; drawSide(); } },
+      thumb(ctx.store, a.file), h('div', { class: 'cap' }, a.id), note && h('div', { class: 'cap muted', style: { fontSize: '11px' } }, note));
+    const group = (title, items, note) => items.length ? [h('div', { class: 'obj-lib-head' }, `${title} (${items.length})`), h('div', { class: 'thumb-grid' }, items.map(a => card(a, note(a))))] : [];
+    const otherNames = f => [...(use?.get(f) || [])].filter(m => m !== M.id).map(m => (M.list.find(x => x.id === m) || {}).name || m);
+    return h('div', { class: 'obj-lib' },
+      ...group('이 맵에 놓인 사물', here, a => `이 맵 ${hereCount.get(a.file)}개`),
+      ...(use ? group('다른 맵에 놓인 사물', other, a => { const n = otherNames(a.file); return n.slice(0, 2).join('·') + (n.length > 2 ? ` 외 ${n.length - 2}` : ''); })
+              : [h('div', { class: 'obj-lib-head' }, '다른 맵에 놓인 사물 — 확인하는 중…')]),
+      ...group(use ? '아직 아무 데도 안 놓인 사물' : '나머지 사물', none, () => ''));
+  }
   function drawSide() {
     const tools = [['terrain', '🖌 지형 붓'], ['blend', '🌫 섞기 붓'], ['height', '⛰ 높이 붓'], ['pass', '🚧 통행 붓'], ['event', '★ 이벤트'], ['object', '🌲 사물'], ['select', '👆 선택']];
     const objAssets = M.assets.filter(a => ['object', 'decor'].includes(a.kind) && a.status !== '보관');
@@ -765,7 +794,7 @@ async function editView(ctx, id) {
         st.tool === 'event' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '맵을 누르면 그 칸에 이벤트 지점이 생겨요. 이미 있는 지점을 누르면 선택돼요. 오른쪽에서 종류와 연결할 스토리 장면을 고르세요.'),
         st.tool === 'object' && h('div', {},
           h('p', { class: 'muted', style: { fontSize: '13px' } }, '사물을 고르고 맵을 누르면 그 자리에 놓여요(누른 곳이 사물의 발밑). 놓인 사물은 끌어서 옮겨요.'),
-          objAssets.length ? h('div', { class: 'thumb-grid' }, objAssets.map(a => h('div', { class: `thumb-card ${st.objFile === a.file ? 'on' : ''}`, onclick: () => { st.objFile = a.file; drawSide(); } }, thumb(ctx.store, a.file), h('div', { class: 'cap' }, a.id))))
+          objAssets.length ? objLibrary(objAssets)
             : h('div', { class: 'empty' }, '맵 사물 그림이 아직 없어요. 캐릭터룸 → 그림 올리기에서 종류를 "맵 사물"로 올려 주세요.')),
         st.tool === 'select' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '이벤트나 사물을 눌러 선택하면 오른쪽에서 고치거나 지울 수 있어요.')),
       h('div', { class: 'card' },

@@ -474,3 +474,11 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .cg-head .spacer{flex:1}
 .cg-gallery .pv-stage.mock{max-width:none;width:100%;cursor:default}
 .cg-tools{gap:8px;align-items:center;flex-wrap:wrap}
+
+/* 맵 룸 사물 목록: 목록만 따로 스크롤 (req_mwlwxmeh7bgk) */
+.obj-lib { max-height: 62vh; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--line, #ddd); border-radius: 8px; padding: 0 6px 6px; }
+.obj-lib-head { position: sticky; top: 0; z-index: 1; background: var(--panel, #fff); font-weight: 700; font-size: 13px; padding: 6px 2px; border-bottom: 1px solid var(--line, #eee); }
+.obj-lib .thumb-grid { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; padding-top: 6px; }
+.obj-lib .thumb-card { padding: 4px; }
+.obj-lib .thumb-card img, .obj-lib .thumb-card .thumb { max-height: 78px; height: 78px; object-fit: contain; }
+.obj-lib .thumb-card .cap { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
