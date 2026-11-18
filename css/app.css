@@ -473,3 +473,4 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 .cg-head{display:flex;align-items:baseline;gap:4px;font-size:14px}
 .cg-head .spacer{flex:1}
 .cg-gallery .pv-stage.mock{max-width:none;width:100%;cursor:default}
+.cg-tools{gap:8px;align-items:center;flex-wrap:wrap}

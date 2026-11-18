@@ -743,14 +743,22 @@ async function preview(s) {
 // 화풍의 통일감과 이야기 흐름을 한눈에 검토하는 용도. 대화창에는 그 일러스트가 떠 있는 동안 처음 나오는 대사를 보여 준다.
 const chapterRank = f => f.endsWith('prologue.json') ? 0 : (parseInt((f.match(/chapter(\d+)/) || [])[1], 10) || 99);
 const chapterName = f => f.endsWith('prologue.json') ? '프롤로그' : (f.match(/chapter(\d+)/) ? `${f.match(/chapter(\d+)/)[1]}장` : f.split('/').pop().replace('.json', ''));
+// 모아보기 카드가 다른 장(파일)의 일러스트 칸을 고칠 때: 그 장을 불러와 지금 편집 대상으로 (스토리 룸 일러스트 칸과 같은 저장 방식)
+async function useStoryFile(ctx, file) {
+  if (S && S.file === file && S.store === ctx.store) return true;
+  if (isDirty() && !await confirmBox('장면 편집에서 저장 안 한 변경이 있어요. 버리고 이 일러스트를 고칠까요?', '버리고 계속')) return false;
+  FILE = file; localStorage.setItem('pyle.storyFile', FILE);
+  await load(ctx); S.file = FILE;
+  return true;
+}
 async function cgGalleryPanel(ctx) {
   if (!S || S.store !== ctx.store) await load(ctx);      // 초상화·화자 이름용 (인물 자료)
   const box = h('div', {});
   const files = (await ctx.store.list('data/story').catch(() => [])).filter(f => f.name.endsWith('.json')).map(f => f.path)
     .sort((a, b) => chapterRank(a) - chapterRank(b));
   const stories = await Promise.all(files.map(f => ctx.store.getJSON(f).then(r => [f, r.data]).catch(() => [f, null])));
-  const allIll = {};
-  for (const [, st] of stories) Object.assign(allIll, st?.illustrations || {});        // 다른 장의 일러스트 칸도 찾게
+  const allIll = {}, owner = {};
+  for (const [f, st] of stories) for (const [k, v] of Object.entries(st?.illustrations || {})) { allIll[k] = v; owner[k] = f; }   // 다른 장의 일러스트 칸도 찾게
   const items = [];
   for (const [file, st] of stories) {
     if (!st?.scenes) continue;
@@ -800,15 +808,49 @@ async function cgGalleryPanel(ctx) {
         requestAnimationFrame(() => layoutStage(stage));
       };
       const open = h('a', { href: `#/story/edit/${e.sid}`, onclick: () => { localStorage.setItem('pyle.storyFile', e.file); FILE = e.file; S = null; } }, '장면 열기 →');
+      // 스토리 룸 일러스트 칸과 같은 기능 (사용자 req_mwlecott43rn): 그림을 누르면 이 장면용 그림 전부(후보)에서 교체, 의견을 적어 다시 맡기기
+      const refresh = () => { e.ill = S.story.illustrations[e.key]; stage.dataset.loaded = '1'; stage._fill(); headTitle.textContent = `${n + 1}. ${e.ill?.title || e.key}`; };
+      const swap = async () => {
+        if (!await useStoryFile(ctx, owner[e.key])) return;
+        const ill = S.story.illustrations[e.key];
+        if (!ill) return toast('이 일러스트 칸을 찾지 못했어요.', true);
+        const files = cgAllForKey(e.key);
+        if (!files.length) return toast('이 장면용 그림이 아직 없어요. [의견·다시 요청]으로 맡겨 주세요.', true);
+        await swapIllustration(ctx, e.key, files, async file => {
+          ill.file = file; ill.status = '선택됨';
+          try {
+            await saveIllustrations(ctx, `일러스트 선택: ${e.key}`);
+            await updateRegistry(ctx.store, l => { for (const a of l) if (a.file === file) a.status = '사용중'; else if (a.kind === 'event' && a.illustrationKey === e.key && a.status === '사용중') a.status = '보관'; }, `일러스트 교체: ${e.key}`);
+            toast(`"${ill.title}" 일러스트를 바꿨어요.`);
+          } catch (err) { toast(err.message, true); }
+          hoverPreview(null); refresh();
+        });
+      };
+      const ask = async () => {
+        if (!await useStoryFile(ctx, owner[e.key])) return;
+        if (!S.story.illustrations[e.key]) return toast('이 일러스트 칸을 찾지 못했어요.', true);
+        const box = requestBox(ctx, e.key, () => { closeModal(); refresh(); });
+        box.open = true;
+        await modal(`의견 · 다시 요청 — ${S.story.illustrations[e.key].title || e.key}`, h('div', {},
+          h('p', { class: 'muted', style: { fontSize: '13px', margin: '0 0 8px' } }, '고칠 점이나 원하는 그림을 적어 [요청하기]를 누르면 Claude가 확인해서 다시 그리게 맡겨요.'), box), [{ label: '닫기', value: null }]);
+      };
+      stage.style.cursor = 'pointer'; stage.title = '눌러서 이 장면용 그림 전부(후보) 보기 · 교체';
+      stage.addEventListener('click', swap);
+      const headTitle = h('b', {}, `${n + 1}. ${e.ill?.title || e.key}`);
+      const nCand = h('span', { class: 'muted cg-note' });
       list.append(h('div', { class: 'cg-item' },
-        h('div', { class: 'cg-head' }, h('b', {}, `${n + 1}. ${e.ill?.title || e.key}`), h('span', { class: 'muted' }, ` · ${chapterName(e.file)} · ${e.sceneTitle}`), h('span', { class: 'spacer' }), open),
-        stage));
+        h('div', { class: 'cg-head' }, headTitle, h('span', { class: 'muted' }, ` · ${chapterName(e.file)} · ${e.sceneTitle}`), h('span', { class: 'spacer' }), open),
+        stage,
+        h('div', { class: 'row cg-tools' },
+          h('button', { class: 'btn small', onclick: swap }, '🔄 교체 · 후보 보기'),
+          h('button', { class: 'btn small', onclick: ask }, '✍ 의견 · 다시 요청'),
+          e.ill?.request?.status ? h('span', { class: 'badge info' }, e.ill.request.codexTask ? `${e.ill.request.status} · ${e.ill.request.codexTask}` : e.ill.request.status) : nCand)));
       io.observe(stage);
     });
   };
   const count = h('span', { class: 'muted' });
   fileSel.onchange = draw; onlyFlow.onchange = draw;
-  box.append(h('p', { class: 'muted' }, '게임에 나오는 일러스트만 게임 순서대로 늘어놓았어요. 대화창에는 그 일러스트가 떠 있을 때 처음 나오는 대사를 보여 줘요. 화풍이 고른지, 이야기가 자연스럽게 이어지는지 훑어볼 때 쓰세요.'),
+  box.append(h('p', { class: 'muted' }, '게임에 나오는 일러스트만 게임 순서대로 늘어놓았어요 — 스토리 룸 일러스트 칸만 모아 크게 보는 곳이에요. 그림을 누르면 이 장면용 그림 전부(후보)에서 교체할 수 있고, [의견 · 다시 요청]으로 고칠 점을 적어 다시 맡길 수 있어요. 대화창에는 그 일러스트가 떠 있을 때 처음 나오는 대사를 보여 줘요.'),
     h('div', { class: 'row', style: { gap: '10px', alignItems: 'center', margin: '8px 0 14px' } }, fileSel,
       h('label', { style: { display: 'flex', gap: '4px', alignItems: 'center' } }, onlyFlow, '이야기 흐름에 들어간 장면만'), count),
     list);
