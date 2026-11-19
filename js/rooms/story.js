@@ -390,7 +390,7 @@ function stepRow(ctx, s, steps, st, i, redraw, change) {
     text.oninput = () => { st.text = text.value; change(); };
     body = h('div', { class: 'line' }, pic,
       h('div', { class: 'line-main' },
-        h('div', { class: 'row line-head' }, spk, emoSel, nameIn, h('span', { class: 'sid' }, st.id)),
+        h('div', { class: 'row line-head' }, spk, emoSel, nameIn, camPicker(st, steps, change), h('span', { class: 'sid' }, st.id)),
         text));
   } else if (st.kind === 'direction') {
     const text = h('textarea', { rows: 2, placeholder: '연출 설명 (화면 묘사, 움직임 등)' });
@@ -423,11 +423,60 @@ function stepRow(ctx, s, steps, st, i, redraw, change) {
       }
       change();
     };
-    body = h('div', { class: 'cmd' }, h('span', { class: 'tag' }, '명령'), opSel, isShowCg(st.op) ? cgPicker(ctx, st, change, redraw) : args);
+    const camOk = st.op === 'camera_pan' && (st.args?.target == null || typeof st.args.target === 'string');
+    body = h('div', { class: 'cmd' }, h('span', { class: 'tag' }, '명령'), opSel, isShowCg(st.op) ? cgPicker(ctx, st, change, redraw) : camOk ? panPicker(st, steps, change, args) : args);
     opSel.addEventListener('change', redraw);
   }
   row.append(grip, check, body, tools);
   return row;
+}
+
+// ---------- 카메라: 누구를 비출지 (사용자 11/19 "카메라를 내가 조정할 수도 있는 거지? 누굴 비추라고") ----------
+// 게임: 대사 줄 camOn=<인물 id> → 그 대사 전에 그 인물을 비춤 · camStay=true → 카메라 그대로 · 둘 다 없으면 자동(말하는 사람이 화면 밖일 때만 비춤)
+function stageCast(steps) {
+  const out = new Map([['player', '파일(주인공)'], ['mirette', nameOf('mirette')], ['fenel', nameOf('fenel')]]);
+  for (const x of steps) {
+    if (x.kind === 'cmd' && x.op === 'actor_show' && x.args?.id) {
+      const who = x.args.npc || x.args.monster || x.args.id;
+      if (!out.has(x.args.id)) out.set(x.args.id, `${nameOf(who) || nameOf(x.args.id) || who} (${x.args.id})`);
+    }
+    if (x.kind === 'line' && x.speaker && !['system', 'resident', 'narration', 'pyle', 'player'].includes(x.speaker) && !out.has(x.speaker)) out.set(x.speaker, nameOf(x.speaker) || x.speaker);
+  }
+  return out;
+}
+function nameOf(id) { return speakers().find(sp => sp.id === id)?.name || ''; }
+function camPicker(st, steps, change) {
+  const cast = stageCast(steps);
+  if (st.camOn === 'pyle') st.camOn = 'player';
+  if (st.camOn && !cast.has(st.camOn)) cast.set(st.camOn, st.camOn);
+  const cur = st.camOn ? 'on:' + st.camOn : st.camStay ? 'stay' : 'auto';
+  const sel = h('select', { class: 'cam-sel', title: '이 대사 동안 카메라가 누구를 비출지. 자동 = 말하는 사람이 화면 밖일 때만 그 사람을 비춤 · 그대로 = 카메라를 움직이지 않음(멀리서 들리는 목소리 등)' },
+    h('option', { value: 'auto', selected: cur === 'auto' }, '📷 자동'),
+    h('option', { value: 'stay', selected: cur === 'stay' }, '📷 그대로'),
+    ...[...cast].map(([id, nm]) => h('option', { value: 'on:' + id, selected: cur === 'on:' + id }, `📷 ${nm} 비추기`)));
+  sel.onchange = () => {
+    delete st.camOn; delete st.camStay;
+    if (sel.value === 'stay') st.camStay = true;
+    else if (sel.value.startsWith('on:')) st.camOn = sel.value.slice(3);
+    change();
+  };
+  return sel;
+}
+function panPicker(st, steps, change, rawInput) {
+  st.args ||= {};
+  const cast = stageCast(steps);
+  const t = st.args.target;
+  if (t && !cast.has(t)) cast.set(t, t);
+  const who = h('select', { title: '비출 인물' }, [...cast].map(([id, nm]) => h('option', { value: id, selected: id === t }, `${nm} 비추기`)));
+  who.onchange = () => { st.args.target = who.value; change(); };
+  const dur = h('input', { type: 'number', step: 0.1, min: 0, value: st.args.duration ?? 0.8, class: 'dur', title: '카메라가 옮겨 가는 시간(초). 0이면 바로 컷' });
+  dur.oninput = () => { st.args.duration = Number(dur.value); change(); };
+  const fol = h('input', { type: 'checkbox', checked: !!st.args.follow, title: '그 인물이 걸어가면 카메라가 따라감' });
+  fol.onchange = () => { if (fol.checked) st.args.follow = true; else delete st.args.follow; change(); };
+  const raw = h('button', { class: 'btn small', title: '칸 자리([x, y])로 비추기 등 직접 적기' }, '직접 적기');
+  const box = h('span', { class: 'row' }, who, h('span', {}, ' 시간'), dur, h('span', {}, '초 '), h('label', {}, fol, ' 따라가기'), raw);
+  raw.onclick = () => box.replaceWith(rawInput);
+  return box;
 }
 
 function newLine(speaker = firstSpeaker()) { return { id: uid('L'), kind: 'line', speaker, emotion: 'normal', text: '' }; }
@@ -439,7 +488,8 @@ function addButtons(steps, redraw, change) {
     h('button', { class: 'btn small', onclick: () => add({ id: uid('D'), kind: 'direction', text: '' }) }, '+ 연출'),
     h('button', { class: 'btn small', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'set_flag', args: {} }) }, '+ 명령'),
     h('button', { class: 'btn small', title: '이벤트 일러스트를 띄워요. 추가한 뒤 어떤 그림인지 고르세요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'show_cg', args: { key: '', duration: 0.9 } }) }, '+ 🖼 일러스트'),
-    h('button', { class: 'btn small', title: '띄워 둔 일러스트를 닫아요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'hide_cg', args: { duration: 0.9 } }) }, '+ 일러스트 닫기'));
+    h('button', { class: 'btn small', title: '띄워 둔 일러스트를 닫아요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'hide_cg', args: { duration: 0.9 } }) }, '+ 일러스트 닫기'),
+    h('button', { class: 'btn small', title: '카메라로 누군가를 비춰요. 추가한 뒤 누구를 비출지 고르세요.', onclick: () => add({ id: uid('C'), kind: 'cmd', op: 'camera_pan', args: { target: 'player', duration: 0.8 } }) }, '+ 📷 카메라'));
 }
 
 const CLIP = 'pyle.story.clipboard';
