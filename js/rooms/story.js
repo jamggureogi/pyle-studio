@@ -57,13 +57,19 @@ function updateSaveBar() {
   if (!saveBar) return;
   const n = S.dirty.size + (S.flowDirty ? 1 : 0);
   saveBar.querySelector('.msg').textContent = n ? `저장 안 한 변경 ${n}건` : '모두 저장됨';
-  saveBar.querySelector('button.save').disabled = !n;
+  saveBar.querySelector('button.save').disabled = !n || saving;
   saveBar.classList.toggle('dirty', !!n);
 }
 
+let saving = false;
 async function save(ctx) {
+  if (saving) return;
+  saving = true;
   const btn = saveBar.querySelector('button.save');
   btn.disabled = true;
+  // 저장 중임을 보이게 (사용자 req_mwqg5ry0bfvh "지웠는데 저장 입력이 안 됨" — 다른 팀이 같은 파일을 막 고쳤으면 몇 번 다시 시도하느라 시간이 걸림)
+  saveBar.querySelector('.msg').textContent = '저장하는 중… (다른 팀이 같은 파일을 고쳤으면 몇 초 더 걸려요)';
+  btn.textContent = '저장 중…';
   try {
     const dirty = [...S.dirty], flowDirty = S.flowDirty, deleted = S.deleted || new Set();
     // Merge only what changed here into the latest file, so Claude's edits to other scenes are kept.
@@ -78,8 +84,14 @@ async function save(ctx) {
     S.story = next;
     S.dirty.clear(); S.flowDirty = false; S.deleted = new Set();
     toast('저장했어요.');
-  } catch (e) { toast(e.message, true); }
-  updateSaveBar();
+    saving = false; btn.textContent = '저장';
+    updateSaveBar();
+  } catch (e) {
+    saving = false; btn.textContent = '저장';
+    updateSaveBar();
+    saveBar.querySelector('.msg').textContent = `저장하지 못했어요 (${e.message}) — 고친 내용은 그대로 있어요. [저장]을 다시 눌러 주세요.`;
+    toast(`저장하지 못했어요: ${e.message}`, true);
+  }
 }
 
 export async function render(ctx, rest) {
