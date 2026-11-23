@@ -339,7 +339,11 @@ async function editView(ctx, id) {
     g.restore();
     // 출구 칸에서 직접 정한 범위 밖 부분 = 막힘 (범위를 줄이면 닫힘)
     g.fillStyle = 'rgba(255,40,30,0.38)';
-    for (const ev of M.map.events.filter(doorExit)) for (const r of minus({ x: ev.x * TILE, y: ev.y * TILE, w: TILE, h: TILE }, exitZone(ev, null))) g.fillRect(r.x, r.y, r.w, r.h);
+    for (const ev of M.map.events.filter(doorExit)) {      // 문 칸에서 범위 옆만 막힘 (위·아래는 그대로 — 게임과 같음)
+      const z = exitZone(ev, null), cx = ev.x * TILE, cr = cx + TILE;
+      if (z.x > cx + 1) g.fillRect(cx, ev.y * TILE, z.x - cx, TILE);
+      if (z.x + z.w < cr - 1) g.fillRect(z.x + z.w, ev.y * TILE, cr - z.x - z.w, TILE);
+    }
     // 사물에 칠하기: 고른 사물의 그림 테두리와 16px 눈금
     if (st.tool === 'pass' && st.passTarget === 'object' && st.sel && M.map.objects.includes(st.sel)) {
       const bx = objBox(st.sel);
