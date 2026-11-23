@@ -1,5 +1,6 @@
 // Review room: images Claude wants the user to look at, with feedback per image.
 import { h, toast, fmtDate, fill, paged, confirmBox } from '../ui.js';
+import { openAnnotator, uploadMarks, marksRow } from '../annotate.js';
 
 const FILE = 'data/review.json';
 
@@ -34,6 +35,14 @@ export async function render(ctx, rest) {
     list);
 }
 
+// 보낸 의견에 붙은 표시 그림들 (누르면 크게)
+function sentMarks(ctx, paths) {
+  if (!Array.isArray(paths) || !paths.length) return null;
+  const box = h('div', { class: 'ann-marks' }, h('span', { class: 'muted', style: { fontSize: '12px' } }, `✏️ 보낸 표시 그림 ${paths.length}장`));
+  for (const p of paths) ctx.store.blobUrl(p).then(u => box.append(h('span', { class: 'ann-mark' }, h('img', { src: u, onclick: () => zoom(u) })))).catch(() => {});
+  return box;
+}
+
 function card(ctx, it, tab) {
   const el = h('div', { class: 'card review-card' });
   const fb = it.feedback || {};
@@ -46,7 +55,17 @@ function card(ctx, it, tab) {
   // 그림 없이 글로만 보고한 항목은 깨진 그림 대신 아무것도 안 보이게 (사용자 RV-424·970 "미리보기 이미지가 깨져서")
   const imgBox = it.file ? h('div', { class: 'review-img' }, h('span', { class: 'muted' }, '불러오는 중…')) : null;
   // 그림이 여러 장인 항목(files): 첫 장 아래에 나머지도 보여 줌
-  const extra = (it.files || []).filter(f => f && f !== it.file);
+  const extra = [...new Set([...(it.files || []), ...(it.images || []).map(x => typeof x === 'string' ? x : x && x.file)])].filter(f => f && f !== it.file);
+  // 그림 위에 펜으로 표시 (사용자 11/23): 그림마다 [✏️ 표시하기] → 표시한 그림은 의견과 함께 feedback.images 로 감
+  const marks = [];
+  const allImgs = [it.file, ...extra].filter(Boolean);
+  const annotate = async path => {
+    try {
+      const u = await ctx.store.blobUrl(path);
+      const blob = await openAnnotator(u, it.id);
+      if (blob) { marks.push({ blob, src: path }); if (!editing) editing = true; draw(); }
+    } catch (e) { toast(`그림을 열지 못했어요 (${e.message})`, true); }
+  };
   const extraBox = extra.length ? h('div', { class: 'review-img' }) : null;
   for (const f of extra) ctx.store.blobUrl(f).then(u => extraBox.append(h('img', { src: u, style: { marginTop: '8px' }, onclick: () => zoom(u) }))).catch(() => {});
   if (it.file) ctx.store.blobUrl(it.file).then(u => imgBox.replaceChildren(h('img', { src: u, onclick: () => zoom(u) }))).catch(() => imgBox.replaceChildren(h('span', { class: 'muted' }, `그림을 불러오지 못했어요 (${it.file})`)));
@@ -60,6 +79,7 @@ function card(ctx, it, tab) {
       if (!verdict && !comment.value.trim()) return toast('좋아요/고쳐 주세요를 고르거나 의견을 적어 주세요.', true);
       const feedback = { verdict, comment: comment.value.trim(), at: new Date().toISOString() };
       try {
+        if (marks.length) { toast('표시한 그림을 올리는 중…'); feedback.images = await uploadMarks(ctx.store, marks, it.id); marks.length = 0; }
         await ctx.store.updateJSON(FILE, d => { const x = d.items.find(y => y.id === it.id); if (x) { if (x.feedback && x.feedback.at && x.feedback.at !== feedback.at) (x.feedbackHistory ||= []).push(x.feedback); x.feedback = feedback; x.status = '피드백'; } return d; }, `확인 피드백: ${it.id} ${it.title}`, { items: [] });
         Object.assign(it, { feedback, status: '피드백' }); Object.assign(fb, feedback); typed = null;
         toast('피드백을 보냈어요.');
@@ -88,8 +108,11 @@ function card(ctx, it, tab) {
       h('div', { class: 'muted', style: { fontSize: '12px', margin: '2px 0 8px' } }, it.createdAt),
       imgBox,
       extraBox,
+      !closed && allImgs.length > 0 && h('div', { class: 'row ann-open-row' }, ...allImgs.map((p, i) => h('button', { class: 'btn small', title: '그림 위에 빨간 펜·연필로 표시해서 보내요', onclick: () => annotate(p) }, allImgs.length > 1 ? `✏️ ${i + 1}번 그림에 표시하기` : '✏️ 그림에 표시하기'))),
+      marksRow(marks, draw, editing),
       it.desc && h('p', { style: { fontSize: '14px', margin: '10px 0' } }, it.desc),
       prevFb && h('p', { class: 'muted', style: { fontSize: '13px', borderLeft: '3px solid #8aa', paddingLeft: '8px' } }, `지난번에 보낸 의견 (${fmtDate(prevFb.at)} 제출됨): ${prevFb.verdict || ''}${prevFb.comment ? ' — ' + prevFb.comment : ''}`),
+      sentMarks(ctx, (prevFb || (!editing ? fb : {})).images),
       !closed && h('div', { class: 'row' }, vbtn('좋아요', '👍 좋아요'), vbtn('고쳐 주세요', '✏️ 고쳐 주세요')),
       !closed && h('label', { class: 'field', style: { marginTop: '8px' } }, comment),
       closed && fb.verdict && h('p', { class: 'muted', style: { fontSize: '13px' } }, `내 피드백: ${fb.verdict}${fb.comment ? ' — ' + fb.comment : ''}`),

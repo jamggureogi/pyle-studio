@@ -2,6 +2,7 @@
 import { h, toast, fmtDate, fill, paged } from '../ui.js';
 import { renderMarkdown } from '../md.js';
 import { imageStrip, thumb, viewImage } from '../assets.js';
+import { openAnnotator, uploadMarks, marksRow } from '../annotate.js';
 
 const FILE = 'data/decisions.json';
 const inline = t => renderMarkdown(t || '').replace(/^<p>|<\/p>$/g, '');
@@ -30,6 +31,13 @@ export async function render(ctx, rest) {
   return page;
 }
 
+function sentMarks(ctx, paths) {
+  if (!Array.isArray(paths) || !paths.length) return null;
+  const box = h('div', { class: 'ann-marks' }, h('span', { class: 'muted', style: { fontSize: '12px' } }, `✏️ 보낸 표시 그림 ${paths.length}장`));
+  for (const p of paths) ctx.store.blobUrl(p).then(u => box.append(h('span', { class: 'ann-mark' }, h('img', { src: u, onclick: () => viewImage(ctx.store, p, '보낸 표시 그림') })))).catch(() => {});
+  return box;
+}
+
 function card(ctx, d, tab) {
   const prev = d.answer || {};
   const chosen = new Set(Array.isArray(prev.choice) ? prev.choice : prev.choice ? [prev.choice] : []);
@@ -37,6 +45,17 @@ function card(ctx, d, tab) {
   const el = h('div', { class: `card decision ${d.status}` });
 
   let typed = null;
+  // 그림 위에 펜으로 표시 (사용자 11/23): 참고 그림·보기 그림마다 [✏️ 표시하기] → answer.images
+  const marks = [];
+  const pics = [...(d.images || []).map(x => typeof x === 'string' ? { file: x, name: '참고 그림' } : { file: x && x.file, name: (x && x.caption) || '참고 그림' }),
+    ...d.options.filter(o => o.image).map(o => ({ file: o.image, name: `보기 ${o.key}` }))].filter(x => x.file);
+  const annotate = async p => {
+    try {
+      const u = await ctx.store.blobUrl(p.file);
+      const blob = await openAnnotator(u, `${d.id} ${p.name}`);
+      if (blob) { marks.push({ blob, src: p.file }); if (!editing) editing = true; draw(); }
+    } catch (e) { toast(`그림을 열지 못했어요 (${e.message})`, true); }
+  };
   const draw = () => {
     const answered = d.status === '답변됨', decided = d.status === '결정됨';
     const optEls = d.options.map(o => {
@@ -64,6 +83,8 @@ function card(ctx, d, tab) {
       try {
         const now = new Date().toISOString();
         const answer = { choice: d.multi ? [...chosen] : ([...chosen][0] || null), comment: comment.value.trim(), answeredAt: now };
+        if (marks.length) { toast('표시한 그림을 올리는 중…'); answer.images = await uploadMarks(ctx.store, marks, d.id); marks.length = 0; }
+        else if (Array.isArray(prev.images) && prev.images.length) answer.images = prev.images;
         await ctx.store.updateJSON(FILE, data => {
           const x = data.decisions.find(y => y.id === d.id);
           if (x) { x.answer = answer; x.status = '답변됨'; }
@@ -90,6 +111,9 @@ function card(ctx, d, tab) {
       imageStrip(ctx.store, d.images, d.title),
       d.link && h('a', { href: d.link, class: 'small-link' }, '관련 화면 열기 →'),
       h('div', { class: `opts ${d.options.some(o => o.image) ? 'with-img' : ''}` }, optEls),
+      !decided && pics.length > 0 && h('div', { class: 'row ann-open-row', style: { flexWrap: 'wrap', marginTop: '8px' } }, ...pics.map(p => h('button', { class: 'btn small', title: '그림 위에 빨간 펜·연필로 표시해서 의견과 함께 보내요', onclick: () => annotate(p) }, `✏️ ${p.name}에 표시하기`))),
+      marksRow(marks, draw, editing),
+      !editing && sentMarks(ctx, prev.images),
       h('label', { class: 'field', style: { marginTop: '10px' } }, comment),
       decided && d.result && h('div', { class: 'resp' }, h('b', {}, '✅ 반영: '), d.result, d.decidedAt && h('span', { class: 'muted' }, ` · ${fmtDate(d.decidedAt)}`)),
       !decided && h('div', { class: 'row' },
