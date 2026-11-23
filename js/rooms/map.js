@@ -610,7 +610,7 @@ async function editView(ctx, id) {
       if (st.sel === o) {
         g.strokeStyle = '#ffd34d'; g.lineWidth = 3; g.beginPath(); g.arc(o.x, o.y, 12, 0, Math.PI * 2); g.stroke();
         const bx = objBox(o);
-        if (bx && (st.tool === 'select' || st.tool === 'object')) { g.save(); g.setLineDash([8, 5]); g.strokeRect(bx.x, bx.y, bx.w, bx.h); g.setLineDash([]); g.fillStyle = '#fff'; g.strokeStyle = '#1b3a5a'; g.lineWidth = 2; g.fillRect(bx.x + bx.w - HANDLE, bx.y - HANDLE, HANDLE * 2, HANDLE * 2); g.strokeRect(bx.x + bx.w - HANDLE, bx.y - HANDLE, HANDLE * 2, HANDLE * 2); g.restore(); }
+        if (bx && (st.tool === 'select' || st.tool === 'object')) { g.save(); g.setLineDash([8, 5]); g.strokeRect(bx.x, bx.y, bx.w, bx.h); g.setLineDash([]); const hs = HANDLE * 1.4 / Math.min(1, st.zoom); g.fillStyle = '#fff'; g.strokeStyle = '#1b3a5a'; g.lineWidth = 3; g.fillRect(bx.x + bx.w - hs, bx.y - hs, hs * 2, hs * 2); g.strokeRect(bx.x + bx.w - hs, bx.y - hs, hs * 2, hs * 2); g.fillStyle = '#1b3a5a'; g.font = `bold ${Math.round(hs * 1.6)}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('⤡', bx.x + bx.w, bx.y); g.restore(); }
       }
     }
     if (st.grid) {
@@ -802,7 +802,7 @@ async function editView(ctx, id) {
       overlay(); drawProps(); return;
     }
     if ((st.tool === 'select' || st.tool === 'object') && st.sel && M.map.objects.includes(st.sel)) {     // 고른 사물: 오른쪽 위 손잡이 = 크기
-      const hp = scaleHandle(st.sel), tol = HANDLE * 1.8 / Math.min(1, st.zoom);
+      const hp = scaleHandle(st.sel), tol = HANDLE * 2 / Math.min(1, st.zoom);
       if (hp && Math.abs(p.x - hp[0]) <= tol && Math.abs(p.y - hp[1]) <= tol) { scaleDrag = { o: st.sel, s0: st.sel.scale, h0: Math.max(8, st.sel.y - hp[1]) }; return; }
     }
     if (st.tool === 'object') {
