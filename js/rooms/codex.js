@@ -4,7 +4,9 @@ import { loadRegistry, KINDS } from '../assets.js';
 
 const FILE = 'data/codex_tasks.json';
 const STATUS = { 대기: 'warn', 작업중: 'info', 질문: 'danger', 완료: 'ok', 확인됨: '', '다시 요청': 'danger', 보류: '', 대체됨: '' };
-const ASK = '편집실 업데이트 확인하고 data/codex_tasks.json에서 "대기"·"다시 요청" 작업을 AGENTS.md 규칙대로 처리해 줘.';
+const WORKERS = ['코덱스1', '코덱스2'];
+const workerOf = t => t.worker || '코덱스1';
+const askFor = w => `너는 ${w}야. 편집실 업데이트 확인하고 data/codex_tasks.json에서 worker가 "${w}"인 "대기"·"다시 요청" 작업을 AGENTS.md 규칙대로 처리해 줘. 시작·제출은 tools/codex_submit.py --worker ${w} 로.`;
 
 async function copy(text, what = '복사했어요.') {
   try { await navigator.clipboard.writeText(text); toast(what); } catch { toast('복사하지 못했어요. 직접 선택해서 복사해 주세요.', true); }
@@ -12,8 +14,11 @@ async function copy(text, what = '복사했어요.') {
 
 export async function render(ctx, rest) {
   const tab = ['done', 'checked', 'hold', 'all'].includes(rest[0]) ? rest[0] : 'open';
+  const wf = localStorage.getItem('codex-worker-filter') || '';
   const [{ data }, reg] = await Promise.all([ctx.store.getJSON(FILE, { tasks: [] }), loadRegistry(ctx.store).catch(() => [])]);
-  const tasks = (data.tasks || []).slice().sort((a, b) => (a.priority || 9) - (b.priority || 9));
+  const allTasks = (data.tasks || []).slice().sort((a, b) => (a.priority || 9) - (b.priority || 9));
+  const openOf = w => allTasks.filter(t => workerOf(t) === w && ['대기', '작업중', '질문', '다시 요청'].includes(t.status));
+  const tasks = wf ? allTasks.filter(t => workerOf(t) === wf) : allTasks;
   const groups = {
     open: tasks.filter(t => ['대기', '작업중', '질문', '다시 요청'].includes(t.status)),
     done: tasks.filter(t => t.status === '완료'),
@@ -28,9 +33,15 @@ export async function render(ctx, rest) {
     h('h1', {}, '🤝 코덱스'),
     h('p', { class: 'sub' }, 'Claude가 Codex에게 남기는 그림 작업 지시서예요. Codex가 그림을 만들어 올리고 "완료"로 표시하면, 여기서 결과를 보고 확인하거나 다시 요청해요.'),
     h('div', { class: 'card codex-how' },
-      h('b', {}, 'Codex에게 이렇게 말하세요'),
-      h('div', { class: 'row', style: { marginTop: '6px' } }, h('code', { class: 'ask' }, ASK), h('button', { class: 'btn small', onclick: () => copy(ASK, '말할 문장을 복사했어요. Codex에 붙여넣으세요.') }, '복사')),
+      h('b', {}, 'Codex에게 이렇게 말하세요 (Codex가 두 대예요)'),
+      WORKERS.map(w => h('div', { class: 'row', style: { marginTop: '6px' } },
+        h('span', { class: 'badge info' }, `${w} · 남은 일 ${openOf(w).length}`),
+        h('code', { class: 'ask', style: { flex: 1 } }, askFor(w)),
+        h('button', { class: 'btn small', onclick: () => copy(askFor(w), `${w}에게 말할 문장을 복사했어요.`) }, '복사'))),
       h('p', { class: 'muted', style: { fontSize: '13px', margin: '8px 0 0' } }, '결과 그림은 저장소의 ', h('code', {}, 'assets/_inbox/codex/<작업번호>/'), ' 에 들어가고, 그림 보관함에 "후보"로 등록돼요.')),
+    h('div', { class: 'row', style: { gap: '6px', margin: '8px 0' } },
+      h('span', { class: 'muted' }, '보기:'),
+      ['', ...WORKERS].map(w => h('button', { class: 'btn small' + (wf === w ? ' primary' : ''), onclick: () => { localStorage.setItem('codex-worker-filter', w); window.dispatchEvent(new HashChangeEvent('hashchange')); } }, w || '모두'))),
     h('div', { class: 'tabs' },
       h('a', { href: '#/codex', class: tab === 'open' ? 'on' : '' }, `할 일 (${groups.open.length})`),
       h('a', { href: '#/codex/done', class: tab === 'done' ? 'on' : '' }, `완료 · 확인 필요 (${groups.done.length})`),
@@ -63,6 +74,13 @@ function card(ctx, t, reg) {
       window.dispatchEvent(new HashChangeEvent('hashchange'));
     } catch (e) { toast(e.message, true); }
   };
+  const moveTo = async (w) => {
+    try {
+      await ctx.store.updateJSON(FILE, d => { const x = d.tasks.find(y => y.id === t.id); if (x) x.worker = w; return d; }, `코덱스 작업 ${t.id} → ${w}`, { tasks: [] });
+      toast(`${w}에게 넘겼어요.`);
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    } catch (e) { toast(e.message, true); }
+  };
   const again = async () => {
     const ta = h('textarea', { rows: 4, placeholder: '무엇을 어떻게 고쳐 달라고 할까요?' });
     const ok = await modal(`${t.id} 다시 요청`, h('label', { class: 'field' }, h('span', {}, 'Codex에게 전할 말'), ta), [{ label: '취소', value: false }, { label: '다시 요청', value: true, primary: true }]);
@@ -82,6 +100,7 @@ function card(ctx, t, reg) {
       h('h2', { style: { margin: 0, flex: 1 } }, t.title),
       h('span', { class: `badge ${STATUS[t.status] || ''}` }, t.status)),
     h('div', { class: 'muted', style: { fontSize: '12px', margin: '4px 0 8px' } },
+      h('span', { class: 'badge ' + (workerOf(t) === '코덱스2' ? 'warn' : 'ok'), style: { marginRight: '6px' } }, workerOf(t)),
       t.team && h('span', { class: 'badge info', style: { marginRight: '6px' } }, `${t.team} 팀`),
       `우선순위 ${t.priority} · ${KINDS[t.kind] || t.kind} · ${t.count}장 · ${t.size}`, t.illustrationKey && ` · 일러스트 칸 ${t.illustrationKey}`, t.owner && ` · 인물 ${t.owner}`, ` · ${t.createdBy} ${t.createdAt || ''}`),
     h('div', { class: 'row out' }, h('span', { class: 'muted' }, '결과 넣을 곳'), h('code', {}, t.outputDir), h('button', { class: 'btn small', onclick: () => copy(t.outputDir) }, '복사')),
@@ -96,6 +115,8 @@ function card(ctx, t, reg) {
     t.codexReport && h('div', { class: 'resp codex' }, h('b', {}, '🤖 Codex: '), t.codexReport.note || '(메모 없음)', t.codexReport.completedAt && h('span', { class: 'muted' }, ` · ${fmtDate(t.codexReport.completedAt)}`)),
     t.claudeNote && h('div', { class: 'resp' }, h('b', {}, '🧩 Claude: '), t.claudeNote),
     thumbs && h('div', {}, h('h4', { style: { margin: '10px 0 6px' } }, `결과 ${files.length}장`), thumbs),
+    ['대기', '다시 요청'].includes(t.status) && h('div', { class: 'row', style: { marginTop: '10px' } },
+      WORKERS.filter(w => w !== workerOf(t)).map(w => h('button', { class: 'btn small', onclick: () => moveTo(w) }, `⇄ ${w}에게 넘기기`))),
     t.status === '완료' && h('div', { class: 'row', style: { marginTop: '10px' } },
       h('button', { class: 'btn primary', onclick: () => setStatus('확인됨') }, '✔ 확인했어요'),
       h('button', { class: 'btn', onclick: again }, '↺ 다시 요청'),
