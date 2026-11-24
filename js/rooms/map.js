@@ -146,7 +146,7 @@ async function editView(ctx, id) {
   }
   if (M.empty) return h('div', { class: 'card empty' }, '맵이 없어요. ', h('button', { class: 'btn small', onclick: () => newMap(ctx) }, '+ 새 맵'));
   const st = M.ui ||= { tool: 'terrain', terrain: M.map.terrains.indexOf('dirt_path') >= 0 ? M.map.terrains.indexOf('dirt_path') : 0, brush: 1, grid: true, zoom: 0.5, quality: 0.5, sel: null, hlevel: 1, hstyle: 'cliff', blendMode: 1 };
-  st.hlevel ??= 1; st.hstyle ??= 'cliff'; st.blendMode ??= 1; st.passMode ??= 2; st.showPass ??= false; st.passCell ??= TILE; st.passTarget ??= 'map';
+  st.hlevel ??= 1; st.hstyle ??= 'cliff'; st.blendMode ??= 1; st.passMode ??= 2; st.showPass ??= false; st.passCell ??= TILE; st.passTarget ??= 'map'; st.underOn ??= true;
 
   const stage = h('div', { class: 'map-stage' }, h('div', { class: 'empty' }, '지형 그리는 중… (처음엔 몇 초 걸려요)'));
   const side = h('div', { class: 'map-side' });
@@ -172,17 +172,129 @@ async function editView(ctx, id) {
   gridChk.onchange = () => { st.grid = gridChk.checked; overlay(); };
   const passChk = h('input', { type: 'checkbox', checked: st.showPass });
   passChk.onchange = () => { st.showPass = passChk.checked; overlay(); };
+  const underChk = h('input', { type: 'checkbox', checked: st.underOn });
+  underChk.onchange = () => { st.underOn = underChk.checked; layout(); overlay(); if (st.tool === 'underlay') drawSide(); };
 
   // canvases: terrain (from renderer) + overlay (grid, events, objects)
   const base = h('canvas', { class: 'map-base' });
   const over = h('canvas', { class: 'map-over' });
-  const wrap = h('div', { class: 'map-canvas' }, base, over);
+  // 밑그림 (컨셉 그림을 맵 위에 겹쳐 보고 따라 그리기): 바닥 그림 위·사물/격자 아래. 맵 json "underlay" {file, x, y, w, h(칸), alpha}
+  const under = h('img', { class: 'map-under', alt: '' });
+  const wrap = h('div', { class: 'map-canvas' }, base, under, over);
   const W = M.map.cols * TILE, H = M.map.rows * TILE;
   const objImgs = new Map();
 
   function layout() {
     for (const c of [base, over]) { c.style.width = `${W * st.zoom}px`; c.style.height = `${H * st.zoom}px`; }
     wrap.style.width = `${W * st.zoom}px`; wrap.style.height = `${H * st.zoom}px`;
+    placeUnder();
+  }
+  // ---------- 밑그림 ----------
+  function placeUnder() {
+    const u = M.map.underlay;
+    if (!u || !u.file || !st.underOn) { under.style.display = 'none'; return; }
+    if (under.dataset.file !== u.file) {
+      under.dataset.file = u.file; under.removeAttribute('src');
+      ctx.store.blobUrl(u.file).then(url => { if (under.dataset.file === u.file) under.src = url; }).catch(() => toast(`밑그림을 불러오지 못했어요: ${u.file}`, true));
+    }
+    const z = TILE * st.zoom;
+    Object.assign(under.style, { display: '', left: `${u.x * z}px`, top: `${u.y * z}px`, width: `${u.w * z}px`, height: `${u.h * z}px`, opacity: String(u.alpha ?? 0.5) });
+  }
+  const r2 = v => Math.round(v * 100) / 100;
+  // 새 그림을 고르면: 처음이면 맵 가로에 맞춰 왼쪽 위에, 이미 있으면 자리·가로는 그대로 두고 세로만 그림 비율로
+  function setUnderFile(file) {
+    file = (file || '').trim(); if (!file) return;
+    ctx.store.blobUrl(file).then(url => new Promise((ok, bad) => { const im = new Image(); im.onload = () => ok(im); im.onerror = bad; im.src = url; })).then(im => {
+      const old = M.map.underlay, ratio = im.naturalHeight / im.naturalWidth;
+      const w = old ? old.w : M.map.cols;
+      M.map.underlay = { file, x: old ? old.x : 0, y: old ? old.y : 0, w: r2(w), h: r2(w * ratio), alpha: old?.alpha ?? 0.5 };
+      st.underOn = true; underChk.checked = true; markDirty(); layout(); overlay(); drawSide();
+    }).catch(() => toast(`그림을 불러오지 못했어요: ${file}`, true));
+  }
+  const underCorners = u => [['nw', u.x, u.y], ['ne', u.x + u.w, u.y], ['sw', u.x, u.y + u.h], ['se', u.x + u.w, u.y + u.h]];
+  function drawUnderBox(g) {
+    const u = M.map.underlay; if (!u) return;
+    g.save(); g.setLineDash([12, 7]); g.strokeStyle = '#ffd34d'; g.lineWidth = 4; g.strokeRect(u.x * TILE, u.y * TILE, u.w * TILE, u.h * TILE);
+    g.setLineDash([]); const hs = HANDLE * 1.4 / Math.min(1, st.zoom); g.fillStyle = '#fff'; g.strokeStyle = '#1b3a5a'; g.lineWidth = 3;
+    for (const [, cx, cy] of underCorners(u)) { g.fillRect(cx * TILE - hs, cy * TILE - hs, hs * 2, hs * 2); g.strokeRect(cx * TILE - hs, cy * TILE - hs, hs * 2, hs * 2); }
+    g.restore();
+  }
+  let underDrag = null;
+  function underDown(p) {
+    const u = M.map.underlay;
+    if (!u) { toast('왼쪽에서 밑그림 그림을 먼저 고르세요.', true); return; }
+    if (!st.underOn) { st.underOn = true; underChk.checked = true; layout(); }
+    const tol = HANDLE * 2 / Math.min(1, st.zoom) / TILE, q = { x: p.x / TILE, y: p.y / TILE };
+    const c = underCorners(u).find(([, cx, cy]) => Math.abs(q.x - cx) <= tol && Math.abs(q.y - cy) <= tol);
+    if (c) { const ax = c[0].includes('w') ? u.x + u.w : u.x, ay = c[0].includes('n') ? u.y + u.h : u.y; underDrag = { mode: c[0], ax, ay, ratio: u.h / u.w }; return; }
+    if (q.x >= u.x && q.x <= u.x + u.w && q.y >= u.y && q.y <= u.y + u.h) underDrag = { mode: 'move', p0: q, x0: u.x, y0: u.y };
+  }
+  function underMove(p) {
+    const u = M.map.underlay, d = underDrag, q = { x: p.x / TILE, y: p.y / TILE };
+    if (d.mode === 'move') { u.x = r2(d.x0 + q.x - d.p0.x); u.y = r2(d.y0 + q.y - d.p0.y); }
+    else {      // 모서리: 맞은편 모서리를 붙잡고 그림 비율 그대로 키우고 줄임
+      const w = Math.max(1, Math.abs(q.x - d.ax), Math.abs(q.y - d.ay) / d.ratio), hh = w * d.ratio;
+      u.w = r2(w); u.h = r2(hh);
+      u.x = r2(d.mode.includes('w') ? d.ax - w : d.ax); u.y = r2(d.mode.includes('n') ? d.ay - hh : d.ay);
+    }
+    markDirty(); placeUnder(); overlay();
+    underNums.forEach((inp, i) => { if (inp.isConnected) inp.value = u[['x', 'y', 'w', 'h'][i]]; });
+  }
+  // 그림 고르기: assets/_inbox/codex/ 아래 폴더(작업 번호) → 그 안의 그림
+  const UNDER_DIR = 'assets/_inbox/codex';
+  let underDirs = null, underNums = [];
+  const underFiles = new Map();      // 폴더 → 그림 목록 (한 번만 읽음)
+  function underPicker() {
+    const box = h('div', {});
+    const sel = h('select', {}, h('option', { value: '' }, '폴더 불러오는 중…'));
+    const grid = h('div', { class: 'thumb-grid' });
+    const showDir = async dir => {
+      st.underDir = dir; if (!dir) { fill(grid); return; }
+      fill(grid, h('div', { class: 'muted' }, '불러오는 중…'));
+      try {
+        if (!underFiles.has(dir)) underFiles.set(dir, ctx.store.list(`${UNDER_DIR}/${dir}`).catch(e => { underFiles.delete(dir); throw e; }));
+        const items = (await underFiles.get(dir)).filter(x => x.type === 'file' && /\.(png|jpe?g|webp)$/i.test(x.name));
+        fill(grid, items.length ? items.map(x => h('div', { class: `thumb-card ${M.map.underlay?.file === x.path ? 'on' : ''}`, onclick: () => setUnderFile(x.path) },
+          thumb(ctx.store, x.path), h('div', { class: 'cap' }, x.name))) : h('div', { class: 'muted' }, '그림이 없어요.'));
+      } catch (e) { fill(grid, h('div', { class: 'muted' }, e.message)); }
+    };
+    sel.onchange = () => showDir(sel.value);
+    (underDirs ||= ctx.store.list(UNDER_DIR).then(l => l.filter(x => x.type === 'dir').map(x => x.name)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true })))).then(dirs => {
+      fill(sel, h('option', { value: '' }, `(작업 폴더 고르기 — ${dirs.length}개)`), dirs.map(d => h('option', { value: d, selected: d === st.underDir }, d)));
+      if (st.underDir) showDir(st.underDir);
+    }).catch(() => { underDirs = null; fill(sel, h('option', { value: '' }, '(폴더 목록을 못 불러왔어요)')); });
+    return fill(box, h('label', { class: 'field' }, h('span', {}, 'Codex 그림 폴더'), sel), grid);
+  }
+  function underPanel() {
+    const u = M.map.underlay;
+    const path = h('input', { value: u?.file || '', placeholder: 'assets/_inbox/codex/CX-000/concept.png' });
+    const alpha = h('input', { type: 'range', min: 0.05, max: 1, step: 0.05, value: u?.alpha ?? 0.5 });
+    const av = h('span', { class: 'muted' }, String(u?.alpha ?? 0.5));
+    alpha.oninput = () => { if (!M.map.underlay) return; M.map.underlay.alpha = Number(alpha.value); av.textContent = alpha.value; markDirty(); placeUnder(); };
+    const nums = u ? ['x', 'y', 'w', 'h'].map((k, i) => {
+      const inp = h('input', { type: 'number', step: 0.25, class: 'num', value: u[k] });
+      inp.onchange = () => {
+        const v = Number(inp.value); if (!Number.isFinite(v)) return;
+        const ratio = u.h / u.w;
+        if (k === 'w') { u.w = r2(Math.max(1, v)); u.h = r2(u.w * ratio); } else if (k === 'h') { u.h = r2(Math.max(1, v)); u.w = r2(u.h / ratio); } else u[k] = r2(v);
+        markDirty(); placeUnder(); overlay(); drawSide();
+      };
+      return h('label', { class: 'field' }, h('span', {}, ['왼쪽 칸', '위 칸', '가로 칸', '세로 칸'][i]), inp);
+    }) : [];
+    underNums = nums.map(l => l.querySelector('input'));
+    const fit = () => { const r = u.h / u.w; Object.assign(u, { x: 0, y: 0, w: M.map.cols, h: r2(M.map.cols * r) }); markDirty(); placeUnder(); overlay(); drawSide(); };
+    return h('div', {},
+      h('h4', {}, '🖼 밑그림 (컨셉 그림 겹쳐 보기)'),
+      h('label', { class: 'field' }, h('span', {}, '그림 경로'), path),
+      h('div', { class: 'row' }, h('button', { class: 'btn small primary', onclick: () => setUnderFile(path.value) }, '이 그림으로'),
+        u && h('label', { class: 'row', style: { gap: '4px' } }, (() => { const c = h('input', { type: 'checkbox', checked: st.underOn }); c.onchange = () => { st.underOn = c.checked; underChk.checked = c.checked; layout(); overlay(); }; return c; })(), '보이기')),
+      u && h('label', { class: 'fx-row' }, h('span', {}, '진하기'), alpha, av),
+      u && h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' } }, ...nums),
+      u && h('div', { class: 'row' }, h('button', { class: 'btn small', onclick: fit }, '↔ 맵 가로에 맞추기'),
+        h('button', { class: 'btn small danger', onclick: () => { delete M.map.underlay; under.dataset.file = ''; markDirty(); layout(); overlay(); drawSide(); } }, '밑그림 빼기')),
+      h('p', { class: 'muted', style: { fontSize: '12px' } }, '그림 안을 끌면 옮기고, 네 모서리의 흰 손잡이를 끌면 그림 비율 그대로 크기가 바뀌어요. 바닥 위·사물 아래에 겹쳐 보여요. 자리·크기·진하기는 맵과 함께 [저장]돼요. 다른 도구를 쓸 때도 위쪽 [🖼 밑그림]으로 켜고 끌 수 있어요(보기만, 게임에는 안 나옴).'),
+      underPicker());
   }
   async function draw() {
     if (!M.renderer || M.renderer.scale !== st.quality) {
@@ -633,6 +745,7 @@ async function editView(ctx, id) {
       }
     }
     if (st.showPass || st.tool === 'pass') drawPass(g);
+    if (st.tool === 'underlay' && st.underOn) drawUnderBox(g);
     if (st.tool === 'blend' && M.map.blend) {
       for (let r = 0; r <= M.map.rows; r++) for (let c = 0; c <= M.map.cols; c++) {
         const v = M.map.blend[r * (M.map.cols + 1) + c];
@@ -774,6 +887,7 @@ async function editView(ctx, id) {
   over.addEventListener('pointerdown', e => {
     const p = posOf(e);
     over.setPointerCapture(e.pointerId);
+    if (st.tool === 'underlay') { underDown(p); return; }
     if (st.tool === 'terrain') { painting = true; paintAt(p); return; }
     if (st.tool === 'height') { painting = true; paintHeight(p); return; }
     if (st.tool === 'blend') { painting = true; paintBlend(p); return; }
@@ -836,6 +950,7 @@ async function editView(ctx, id) {
       if (dx !== bldDrag.done[0] || dy !== bldDrag.done[1]) { moveBuilding(bldDrag.b, dx - bldDrag.done[0], dy - bldDrag.done[1], bldDrag.mates); bldDrag.done = [dx, dy]; markDirty(); overlay(); drawProps(); }
     }
     if (rectDrag) { rectDrag.b = p; overlay(); }
+    if (underDrag) underMove(p);
     if (evDrag) {
       const d = evDrag, ev = d.ev, q = v => Math.round(v / (TILE / 4)) * (TILE / 4) / TILE;      // ¼칸 단위
       if (d.mode === 'move' && d.pos0) {
@@ -859,7 +974,7 @@ async function editView(ctx, id) {
     }
   });
   over.addEventListener('pointerup', () => {
-    painting = false; dragObj = null; evDrag = null; scaleDrag = null; bldDrag = null;
+    painting = false; dragObj = null; evDrag = null; scaleDrag = null; bldDrag = null; underDrag = null;
     if (rectDrag) {                                         // 사각형 안 전체를 한 번에 막기·열기
       const r = rectDrag; rectDrag = null;
       const step = st.passTarget === 'object' ? (isBld(st.sel) ? st.passCell : Math.max(FINE, st.passCell < TILE ? st.passCell : FINE)) : st.passCell;
@@ -897,7 +1012,7 @@ async function editView(ctx, id) {
       ...group(use ? '아직 아무 데도 안 놓인 사물' : '나머지 사물', none, () => ''));
   }
   function drawSide() {
-    const tools = [['terrain', '🖌 지형 붓'], ['blend', '🌫 섞기 붓'], ['height', '⛰ 높이 붓'], ['pass', '🚧 통행 붓'], ['event', '★ 이벤트'], ['object', '🌲 사물'], ['select', '👆 선택']];
+    const tools = [['terrain', '🖌 지형 붓'], ['blend', '🌫 섞기 붓'], ['height', '⛰ 높이 붓'], ['pass', '🚧 통행 붓'], ['event', '★ 이벤트'], ['object', '🌲 사물'], ['select', '👆 선택'], ['underlay', '🖼 밑그림']];
     const objAssets = M.assets.filter(a => ['object', 'decor'].includes(a.kind) && a.status !== '보관');
     fill(side, 
       h('div', { class: 'card' },
@@ -959,6 +1074,7 @@ async function editView(ctx, id) {
           h('p', { class: 'muted', style: { fontSize: '13px' } }, '사물을 고르고 맵을 누르면 그 자리에 놓여요(누른 곳이 사물의 발밑). 놓인 사물은 끌어서 옮겨요.'),
           objAssets.length ? objLibrary(objAssets)
             : h('div', { class: 'empty' }, '맵 사물 그림이 아직 없어요. 캐릭터룸 → 그림 올리기에서 종류를 "맵 사물"로 올려 주세요.')),
+        st.tool === 'underlay' && underPanel(),
         st.tool === 'select' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '이벤트·사물·건물을 눌러 고르고 그대로 끌면 옮겨져요. 고른 사물의 오른쪽 위 흰 손잡이를 끌면 크기가 바뀌어요. 오른쪽에서 고치거나 지울 수 있어요.')),
       h('div', { class: 'card' },
         h('h4', { style: { marginTop: 0 } }, '맵 정보'),
@@ -1058,7 +1174,7 @@ async function editView(ctx, id) {
   drawSide(); drawProps();
   setTimeout(draw, 20);
   return h('div', {},
-    h('div', { class: 'savebar' }, mapSel, zoomSel, q, h('label', { class: 'row', style: { gap: '4px' } }, gridChk, '격자'), h('label', { class: 'row', style: { gap: '4px' }, title: '게임에서 지나갈 수 없는 칸을 빨갛게 보여요' }, passChk, '🚧 통행'), status, h('span', { class: 'spacer' }), saveBtn),
+    h('div', { class: 'savebar' }, mapSel, zoomSel, q, h('label', { class: 'row', style: { gap: '4px' } }, gridChk, '격자'), h('label', { class: 'row', style: { gap: '4px' }, title: '게임에서 지나갈 수 없는 칸을 빨갛게 보여요' }, passChk, '🚧 통행'), h('label', { class: 'row', style: { gap: '4px' }, title: '컨셉 그림(밑그림)을 겹쳐 보여요' }, underChk, '🖼 밑그림'), status, h('span', { class: 'spacer' }), saveBtn),
     h('div', { class: 'map-layout' }, side, stage, props),
     mapFeedback(ctx, M.id, M.map.name));
 }

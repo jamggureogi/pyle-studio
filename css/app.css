@@ -236,8 +236,9 @@ textarea.editor{width:100%;min-height:65vh;font-family:ui-monospace,Menlo,Consol
 @media (max-width:1100px){.map-layout{grid-template-columns:1fr}.map-props{order:3}}
 .map-layout>*{min-width:0}
 .map-stage{overflow:auto;max-height:calc(100vh - 220px);background:#1d2420;border-radius:10px;padding:8px}
-.map-canvas{position:relative}
+.map-canvas{position:relative;overflow:hidden}
 .map-canvas canvas{position:absolute;left:0;top:0;image-rendering:auto}
+.map-under{position:absolute;pointer-events:none;user-select:none;max-width:none}
 .map-over{cursor:crosshair;touch-action:none}
 .tool-row{display:flex;gap:4px;flex-wrap:wrap}
 .palette{display:flex;flex-direction:column;gap:4px}
