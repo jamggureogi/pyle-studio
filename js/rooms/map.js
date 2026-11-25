@@ -5,6 +5,7 @@ import { requestPanel } from './requests.js';
 import { TerrainRenderer, drawHeights, loadStrip, CLIFF_FACE, CLIFF_LIP, applyEffects, hasEffects, SHADOW_DEFAULT, BEVEL_DEFAULT } from '../terrain.js';
 import { newId } from './requests.js';
 import { loadRegistry, thumb, KINDS } from '../assets.js';
+import { map3dView, layoutPath } from './map3d.js';
 
 const TILE = 64;
 const INDEX = 'data/maps/index.json';
@@ -135,7 +136,9 @@ async function loadMap(ctx, id) {
   const list = idx.data.maps;
   const mid = id && list.find(m => m.id === id) ? id : list[0]?.id;
   if (!mid) return { list, empty: true };
-  const f = await ctx.store.getJSON(`data/maps/${mid}.json`);
+  const [f, lay] = await Promise.all([ctx.store.getJSON(`data/maps/${mid}.json`), ctx.store.getJSON(layoutPath(mid)).catch(() => ({ data: null, sha: null }))]);
+  // 3D 맵 (사용자 D-309·D-348 C): 배치 목록이 있거나 render3d 맵이면 충돌·타일 도구 대신 3D 배치 화면
+  if (lay.data || f.data.render3d) return { list, id: mid, map: f.data, sha: f.sha, is3d: true, layout: lay.data, layoutSha: lay.sha, dirty: false, store: ctx.store };
   return { list, id: mid, map: f.data, sha: f.sha, defs: terr.data.terrains, scenes: story.data.scenes || {}, assets, sprites: sprites.data || {}, props: (propsF.data || {}).props || {}, bsol: (propsF.data || {}).buildingSolids || {}, dirty: false, store: ctx.store };
 }
 
@@ -145,6 +148,11 @@ async function editView(ctx, id) {
     M = await loadMap(ctx, id);
   }
   if (M.empty) return h('div', { class: 'card empty' }, '맵이 없어요. ', h('button', { class: 'btn small', onclick: () => newMap(ctx) }, '+ 새 맵'));
+  if (M.is3d) {
+    const pick = h('select', {}, M.list.map(m => h('option', { value: m.id, selected: m.id === M.id }, m.name)));
+    pick.onchange = () => ctx.go(`#/map/edit/${pick.value}`);
+    return h('div', {}, map3dView(ctx, M, { picker: pick }), mapFeedback(ctx, M.id, M.map.name));
+  }
   const st = M.ui ||= { tool: 'terrain', terrain: M.map.terrains.indexOf('dirt_path') >= 0 ? M.map.terrains.indexOf('dirt_path') : 0, brush: 1, grid: true, zoom: 0.5, quality: 0.5, sel: null, hlevel: 1, hstyle: 'cliff', blendMode: 1 };
   st.hlevel ??= 1; st.hstyle ??= 'cliff'; st.blendMode ??= 1; st.passMode ??= 2; st.showPass ??= false; st.passCell ??= TILE; st.passTarget ??= 'map'; st.underOn ??= true;
 
