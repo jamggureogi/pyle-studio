@@ -138,7 +138,7 @@ export function map3dView(ctx, S, { picker }) {
         h('p', {}, `이 맵은 3D로 그려지지만 아직 배치 목록(${layoutPath(S.id)})이 없어요. 맵 팀에 배치 목록을 만들어 달라고 요청해 주세요.`)));
   }
   const L = S.layout;
-  const st = S.l3 ||= { sel: null, undo: [], bright: 1, shadow: true };
+  const st = S.l3 ||= { sel: null, undo: [], bright: 1.3, shadow: true };
 
   const stage = h('div', { class: 'm3d-stage' }, h('div', { class: 'm3d-msg' }, '3D 화면 준비 중… (처음엔 모델을 받느라 몇 초 걸려요)'));
   const side = h('div', { class: 'card m3d-side' });
@@ -282,10 +282,10 @@ export function map3dView(ctx, S, { picker }) {
       h('h4', { style: { marginTop: 0 } }, `${KIND_ICON[o.kind] || ''} ${KIND_NAMES[o.kind] || o.kind}`),
       w.length ? h('div', { class: 'm3d-warn' }, w.map(t => h('div', {}, `⚠ ${t}`))) : null,
       h('div', { class: 'm3d-kv' }, h('span', {}, '종류'), h('b', {}, KIND_NAMES[o.kind] || o.kind), h('span', {}, '이름'), h('code', {}, o.id)),
-      h('div', { class: 'field' }, h('span', {}, '위치 (m) — 가로 x · 안쪽 y'),
-        h('div', { class: 'row' }, num(o.pos[0], 0.1, v => { o.pos[0] = v; }), num(o.pos[1], 0.1, v => { o.pos[1] = v; }))),
+      h('div', { class: 'field' }, h('span', {}, '위치 (m) — 가로 x · 안쪽 y (사람 키 ≈ 1.7m)'),
+        h('div', { class: 'row' }, num(Math.round(o.pos[0] * 10) / 10, 0.1, v => { o.pos[0] = v; }), num(Math.round(o.pos[1] * 10) / 10, 0.1, v => { o.pos[1] = v; }))),
       h('div', { class: 'field' }, h('span', {}, '회전 (도)'),
-        h('div', { class: 'row' }, rotBtn(15), rotBtn(-15), num(o.rot || 0, 1, v => { o.rot = v; }))),
+        h('div', { class: 'row' }, rotBtn(15), rotBtn(-15), num(Math.round(o.rot || 0), 1, v => { o.rot = Math.round(v); }))),
       h('label', { class: 'field' }, h('span', {}, o.kind === 'rock' ? '크기 (반지름 m) ' : '크기 (배) '), h('div', { class: 'row' }, sc, scVal)),
       extra,
       h('div', { class: 'row', style: { marginTop: '10px' } },
@@ -295,7 +295,7 @@ export function map3dView(ctx, S, { picker }) {
   function rotate(d) {
     const o = selObj(); if (!o) return;
     pushUndo();
-    o.rot = r3((((o.rot || 0) + d + 180) % 360 + 360) % 360 - 180);
+    o.rot = Math.round((((o.rot || 0) + d + 180) % 360 + 360) % 360 - 180);
     markDirty(); V?.syncOne(o); drawProps();
   }
   function remove() {
