@@ -210,8 +210,10 @@ export const applied = a => a.status === '사용중';
 export const shownStatus = a => applied(a) ? '적용' : '보관';
 export async function libraryView(ctx, rest) {
   const { assets, chars } = await loadAll(ctx);
-  const f = { status: rest[0] || '적용', kind: rest[1] || '', owner: rest[2] || '' };
-  const go = patch => { const n = { ...f, ...patch }; ctx.go(`#/art/list/${n.status}/${n.kind}/${n.owner}`); };
+  const f = { status: rest[0] || '적용', kind: rest[1] || '', owner: rest[2] || '', group: decodeURIComponent(rest[3] || '') };
+  const go = patch => { const n = { ...f, ...patch }; ctx.go(`#/art/list/${n.status}/${n.kind}/${n.owner}/${encodeURIComponent(n.group)}`); };
+  // 디자인 시트 묶음 (사용자 req_mww08h0q9aa3: 하르카·여자 격투가 디자인 시트를 분류해 지금까지 만든 그림을 한 번에)
+  const groups = [...new Set(assets.map(a => a.group).filter(Boolean))].sort();
   const sel = (opts, val, key) => {
     const s = h('select', {}, opts.map(([v, l]) => h('option', { value: v, selected: v === val }, l)));
     s.onchange = () => go({ [key]: s.value });
@@ -220,15 +222,25 @@ export async function libraryView(ctx, rest) {
   const reworking = a => a.rework && ['요청', '요청됨'].includes(a.rework.status);
   const TABS = [['적용', applied, '게임에 적용된 그림'], ['보관', a => !applied(a), '게임에 쓰지 않는 그림 (예전 그림·고르지 않은 후보·참고 자료)'], ['수정요청', reworking, '다시 만들어 달라고 요청한 그림'], ['전체', () => true, '']];
   const cur = TABS.find(t => t[0] === f.status) || TABS[0];
-  const shown = assets.filter(a => cur[1](a) && (!f.kind || a.kind === f.kind) && (!f.owner || a.owner === f.owner || a.owners?.includes(f.owner)));
+  const shown = newestFirstA(assets.filter(a => cur[1](a) && (!f.kind || a.kind === f.kind) && (!f.owner || a.owner === f.owner || a.owners?.includes(f.owner)) && (!f.group || a.group === f.group)));
+  const groupBar = groups.length ? h('div', { class: 'card row', style: { flexWrap: 'wrap', gap: '6px' } },
+    h('b', {}, '디자인 묶음:'),
+    h('a', { href: '#', class: `btn small ${f.group ? '' : 'primary'}`, onclick: e => { e.preventDefault(); go({ group: '' }); } }, '전부'),
+    groups.map(g => h('a', { href: '#', class: `btn small ${f.group === g ? 'primary' : ''}`, onclick: e => { e.preventDefault(); go({ group: g, status: f.group === g ? f.status : '전체' }); } }, `${g} (${assets.filter(a => a.group === g).length})`))) : null;
   return h('div', {},
     h('div', { class: 'card row' },
       h('div', { class: 'tabs', style: { margin: 0, border: 0 } }, TABS.map(([s, fn, tip]) => h('a', { href: '#', class: s === cur[0] ? 'on' : '', title: tip, onclick: e => { e.preventDefault(); go({ status: s }); } }, `${s === '수정요청' ? '↺ 수정 요청 중' : s} (${assets.filter(fn).length})`))),
       h('span', { class: 'spacer' }),
       sel([['', '모든 종류'], ...Object.entries(KINDS)], f.kind, 'kind'),
       sel([['', '모든 인물'], ...chars.characters.map(c => [c.id, c.name])], f.owner, 'owner')),
+    groupBar,
+    f.group && h('p', { class: 'muted', style: { fontSize: '13px' } }, `「${f.group}」으로 지금까지 만든 그림이에요 (최근 것부터). 위 칸에서 '전체'를 고르면 고르지 않은 후보까지 모두 보여요.`),
     cur[0] === '적용' && h('p', { class: 'muted', style: { fontSize: '13px' } }, '게임에 쓰고 있는 그림이에요. 마음에 안 드는 그림을 눌러 "↺ 수정 요청"을 남기면 Claude가 다시 만들어 바꿔 넣어요.'),
     shown.length ? h('div', { class: 'card' }, assetGrid(ctx, shown, chars)) : h('div', { class: 'card empty' }, '조건에 맞는 그림이 없어요.'));
+}
+
+function newestFirstA(list) {
+  return list.map((a, i) => [a, i]).sort((x, y) => String(y[0].createdAt || '').localeCompare(String(x[0].createdAt || '')) || y[1] - x[1]).map(x => x[0]);
 }
 
 function assetGrid(ctx, list, chars) {
