@@ -1,8 +1,14 @@
 // Decisions room: Claude's proposals as clickable choices, with a comment box per item.
-import { h, toast, fmtDate, fill, paged, newestFirst } from '../ui.js';
+import { h, toast, fmtDate, fill, paged } from '../ui.js';
 import { renderMarkdown } from '../md.js';
 import { imageStrip, thumb, viewImage } from '../assets.js';
 import { openAnnotator, uploadMarks, marksRow } from '../annotate.js';
+
+// 최근 것이 맨 앞 (사용자 11/25). 브라우저에 옛 ui.js 가 남아 있어도 열리도록 이 파일 안에 둠.
+function newestFirst(items, keys = ['createdAt']) {
+  const t = x => { for (const k of keys) { const v = x && x[k]; const n = v ? Date.parse(v) : NaN; if (!isNaN(n)) return n; } return 0; };
+  return items.map((x, i) => [x, i, t(x)]).sort((a, b) => (b[2] - a[2]) || (b[1] - a[1])).map(a => a[0]);
+}
 
 const FILE = 'data/decisions.json';
 const inline = t => renderMarkdown(t || '').replace(/^<p>|<\/p>$/g, '');

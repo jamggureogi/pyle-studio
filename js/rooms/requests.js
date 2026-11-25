@@ -1,7 +1,13 @@
 // Request box: the user leaves requests per room; Claude reads data/requests.json and answers.
-import { h, toast, fmtDate, confirmBox, loading, errorBox, paged, newestFirst } from '../ui.js';
+import { h, toast, fmtDate, confirmBox, loading, errorBox, paged } from '../ui.js';
 import { ROOMS, roomName } from '../app.js';
 import { fileToB64, imageStrip } from '../assets.js';
+
+// 최근 것이 맨 앞 (사용자 11/25). 브라우저에 옛 ui.js 가 남아 있어도 열리도록 이 파일 안에 둠.
+function newestFirst(items, keys = ['createdAt']) {
+  const t = x => { for (const k of keys) { const v = x && x[k]; const n = v ? Date.parse(v) : NaN; if (!isNaN(n)) return n; } return 0; };
+  return items.map((x, i) => [x, i, t(x)]).sort((a, b) => (b[2] - a[2]) || (b[1] - a[1])).map(a => a[0]);
+}
 
 const FILE = 'data/requests.json';
 const STATUS = ['대기', '진행중', '완료', '보류'];
