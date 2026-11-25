@@ -1,5 +1,5 @@
 // Request box: the user leaves requests per room; Claude reads data/requests.json and answers.
-import { h, toast, fmtDate, confirmBox, loading, errorBox, paged } from '../ui.js';
+import { h, toast, fmtDate, confirmBox, loading, errorBox, paged, newestFirst } from '../ui.js';
 import { ROOMS, roomName } from '../app.js';
 import { fileToB64, imageStrip } from '../assets.js';
 
@@ -155,7 +155,7 @@ export function requestPanel(ctx, room) {
   }
 
   function draw(all) {
-    const mine = all.filter(r => !room || r.room === room);
+    const mine = newestFirst(all.filter(r => !room || r.room === room));
     const drafts = mine.filter(r => r.status === DRAFT);
     if (!filter) filter = drafts.length ? 'draft' : 'open';
     const pick = { draft: r => r.status === DRAFT, open: r => ['대기', '진행중'].includes(r.status), done: r => ['완료', '보류'].includes(r.status), all: () => true };

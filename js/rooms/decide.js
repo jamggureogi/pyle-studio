@@ -1,5 +1,5 @@
 // Decisions room: Claude's proposals as clickable choices, with a comment box per item.
-import { h, toast, fmtDate, fill, paged } from '../ui.js';
+import { h, toast, fmtDate, fill, paged, newestFirst } from '../ui.js';
 import { renderMarkdown } from '../md.js';
 import { imageStrip, thumb, viewImage } from '../assets.js';
 import { openAnnotator, uploadMarks, marksRow } from '../annotate.js';
@@ -10,7 +10,7 @@ const inline = t => renderMarkdown(t || '').replace(/^<p>|<\/p>$/g, '');
 export async function render(ctx, rest) {
   const tab = ['sent', 'done'].includes(rest[0]) ? rest[0] : 'open';
   const { data } = await ctx.store.getJSON(FILE, { decisions: [] });
-  const all = data.decisions || [];
+  const all = newestFirst(data.decisions || []);
   const open = all.filter(d => d.status === '대기');
   const sent = all.filter(d => d.status === '답변됨');
   const done = all.filter(d => d.status === '결정됨');

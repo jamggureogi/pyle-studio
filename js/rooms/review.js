@@ -1,5 +1,5 @@
 // Review room: images Claude wants the user to look at, with feedback per image.
-import { h, toast, fmtDate, fill, paged, confirmBox } from '../ui.js';
+import { h, toast, fmtDate, fill, paged, confirmBox, newestFirst } from '../ui.js';
 import { openAnnotator, uploadMarks, marksRow } from '../annotate.js';
 
 const FILE = 'data/review.json';
@@ -17,7 +17,7 @@ function zoom(url) {
 export async function render(ctx, rest) {
   const tab = ['sent', 'done', 'old'].includes(rest[0]) ? rest[0] : 'open';
   const { data } = await ctx.store.getJSON(FILE, { items: [] });
-  const all = data.items || [];
+  const all = newestFirst(data.items || []);
   const groups = { open: all.filter(x => x.status === '확인 대기'), sent: all.filter(x => x.status === '피드백'), done: all.filter(x => x.status === '반영됨'), old: all.filter(x => x.status === '지난 내용') };
   const list = h('div', { class: 'review-list' });
   const shown = groups[tab];

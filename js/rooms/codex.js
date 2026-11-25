@@ -1,5 +1,5 @@
 // Codex room: Claude's image work orders for Codex, Codex's completion reports, and the user's check.
-import { h, toast, fmtDate, fill, modal, paged } from '../ui.js';
+import { h, toast, fmtDate, fill, modal, paged, newestFirst } from '../ui.js';
 import { loadRegistry, KINDS } from '../assets.js';
 
 const FILE = 'data/codex_tasks.json';
@@ -16,7 +16,7 @@ export async function render(ctx, rest) {
   const tab = ['done', 'checked', 'hold', 'all'].includes(rest[0]) ? rest[0] : 'open';
   const wf = localStorage.getItem('codex-worker-filter') || '';
   const [{ data }, reg] = await Promise.all([ctx.store.getJSON(FILE, { tasks: [] }), loadRegistry(ctx.store).catch(() => [])]);
-  const allTasks = (data.tasks || []).slice().sort((a, b) => (a.priority || 9) - (b.priority || 9));
+  const allTasks = newestFirst(data.tasks || []);   // 최근 것이 맨 앞 (사용자 11/25)
   const openOf = w => allTasks.filter(t => workerOf(t) === w && ['대기', '작업중', '질문', '다시 요청'].includes(t.status));
   const tasks = wf ? allTasks.filter(t => workerOf(t) === wf) : allTasks;
   const groups = {

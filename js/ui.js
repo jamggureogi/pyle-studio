@@ -78,6 +78,12 @@ export function errorBox(e) {
 
 // 목록 페이지 나누기 (사용자 11/13: "모든 편집실을 통틀어 게시물의 갯수가 많아지면 적당한 분량으로 나눠서 페이지 처리").
 // items 를 size 개씩 보여 주고 위·아래에 [‹ 이전] 1 2 … [다음 ›]. 보던 쪽은 탭마다 기억(sessionStorage, key).
+// 최근 것이 맨 앞 (사용자 11/25 "가장 최근 이슈들이 맨 앞에"). 만든 때(createdAt 등)가 늦은 것부터, 같으면 파일에서 뒤에 있는 것(나중에 넣은 것)부터.
+export function newestFirst(items, keys = ['createdAt']) {
+  const t = x => { for (const k of keys) { const v = x && x[k]; const n = v ? Date.parse(v) : NaN; if (!isNaN(n)) return n; } return 0; };
+  return items.map((x, i) => [x, i, t(x)]).sort((a, b) => (b[2] - a[2]) || (b[1] - a[1])).map(a => a[0]);
+}
+
 export function paged(items, render, { key = location.hash, size = 10, tag = 'div', cls = '' } = {}) {
   const wrap = h('div', { class: 'paged' });
   const pages = Math.ceil(items.length / size);
