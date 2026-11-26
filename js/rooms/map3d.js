@@ -1,18 +1,17 @@
 // 3D 맵 배치 (사용자 D-309 + D-348 C): 3D 맵은 충돌 판정을 만질 필요가 없으니 사물을 끌어 옮기고·더하고·지우는 화면만 둔다.
 // 끌면 바로 임시 미리보기(구운 그늘 없이), '확정'하면 요청함에 "3D 다시 굽기"를 남겨 맵 팀이 다시 굽는다.
 // 자료: data/maps3d/<맵>.layout.json (좌표는 블렌더 m: x 오른쪽, y 안쪽, z 위 → three.js 로는 (x, z, -y)).
+// 사물 라이브러리 (사용자 RV-1025): 더할 수 있는 사물은 data/maps3d/object_library.json 에서 읽는다 — 맵 팀이 새 모델을 만들면 거기 한 줄 더함.
 import { h, toast, fill } from '../ui.js';
 import { newId } from './requests.js';
 
 const PROPS_DIR = 'assets/_inbox/claude/test3d/props/';
 const REQUESTS = 'data/requests.json';
+const LIB_PATH = 'data/maps3d/object_library.json';
 export const layoutPath = id => `data/maps3d/${id}.layout.json`;
 
-const KIND_NAMES = { cabin: '산장', lumber: '통나무 더미', workbench: '작업대', sawhorse: '톱질 받침', rock: '바위', tree: '나무' };
-const KIND_ICON = { cabin: '🏠', lumber: '🪵', workbench: '🛠', sawhorse: '🪚', rock: '🪨', tree: '🌳' };
-const TREE_MODELS = { N1_young: '어린 나무', N2_lean2: '기운 나무', N3_round3: '둥근 나무', N4_fork_big: '큰 갈래 나무', N5_fork_wide: '넓은 갈래 나무', N6_old4: '늙은 나무' };
-const ROCK_SIZES = [[0.5, '작은 바위'], [0.8, '보통 바위'], [1.1, '큰 바위']];
-const SCALE_RANGE = { rock: [0.3, 1.6, 0.05], tree: [0.6, 1.4, 0.01], default: [0.6, 1.5, 0.05] };
+const SCALE_DEF = [0.6, 1.5, 0.05];
+const ALL = '전체';
 // 게임 카메라 (data/maps/<맵>.json view3d.camera 와 같은 느낌): 50° 내려다봄, 망원
 const GAME_CAM = { tilt: 50, fov: 11, dist: 49.6 };
 const VIEW_CAM = { tilt: 50, fov: 24, dist: 78 };
@@ -27,25 +26,168 @@ async function lib() {
   return LIB;
 }
 
-// 모델 glb 는 한 번만 불러 두고 복제해서 씀 (store 가 바뀌면 새로)
-let MODELS = { store: null, map: new Map() };
+// 모델 glb 는 한 번만 불러 두고 복제해서 씀 (store 가 바뀌면 새로). 카드 그림·폴더 목록도 같이 둠
+let MODELS = { store: null, map: new Map(), thumbs: new Map(), dirs: new Map(), lib: null };
+function cacheFor(store) {
+  if (MODELS.store !== store) MODELS = { store, map: new Map(), thumbs: new Map(), dirs: new Map(), lib: null };
+  return MODELS;
+}
 function loadModel(store, path) {
-  if (MODELS.store !== store) MODELS = { store, map: new Map() };
-  if (!MODELS.map.has(path)) {
+  const C = cacheFor(store);
+  if (!C.map.has(path)) {
     const p = (async () => {
       const { GLTFLoader } = await lib();
       const url = await store.blobUrl(path);
       const g = await new GLTFLoader().loadAsync(url);
       return g.scene;
     })();
-    p.catch(() => MODELS.map.delete(path));
-    MODELS.map.set(path, p);
+    p.catch(() => C.map.delete(path));
+    C.map.set(path, p);
   }
-  return MODELS.map.get(path);
+  return C.map.get(path);
+}
+
+// ---------- 사물 라이브러리 ----------
+function normLib(d) {
+  return { missing: !d, items: Array.isArray(d?.items) ? d.items.filter(e => e && e.id && e.kind) : [],
+    categories: Array.isArray(d?.categories) ? d.categories : [], kinds: d?.kinds || {} };
+}
+function loadLibrary(store) {
+  const C = cacheFor(store);
+  C.lib ||= store.getJSON(LIB_PATH, null).then(r => normLib(r.data)).catch(e => { console.error(e); return normLib(null); });
+  return C.lib;
+}
+// 배치 목록의 사물 하나 → 라이브러리 카드 (모양(model)까지 같은 것 먼저)
+function entryFor(LB, o) {
+  const same = LB.items.filter(e => e.kind === o.kind);
+  const exact = same.find(e => e.defaults?.model != null && e.defaults.model === o.model);
+  if (exact) return exact;
+  // 모양 구분이 없으면 처음 크기가 가장 가까운 것 (바위 작은·보통·큰)
+  const plain = same.filter(e => e.defaults?.model == null);
+  const ds = e => Math.abs((e.defaults?.scale ?? 1) - (o.scale ?? 1));
+  return plain.sort((a, b) => ds(a) - ds(b))[0] || same[0] || null;
+}
+const kindName = (LB, k) => LB?.kinds[k]?.name || k;
+const isNewKind = (LB, k) => !!LB && !LB.missing && !LB.kinds[k]?.bake;
+const catIcon = (LB, c) => LB?.categories.find(x => x.id === c)?.icon || '📦';
+// 놓을 사물 하나 만들기 (id 는 놓을 때). 키 순서는 맵 팀 배치 목록과 같게: id, kind, model, pos, rot, scale, 그 밖
+function protoOf(e) {
+  const d = e.defaults || {};
+  const o = { id: null, kind: e.kind };
+  if (d.model != null) o.model = d.model;
+  o.pos = [0, 0]; o.rot = d.rot ?? 0; o.scale = d.scale ?? 1;
+  for (const [k, v] of Object.entries(d)) if (!(k in o)) o[k] = structuredClone(v);
+  for (const [k, r] of Object.entries(e.random || {})) {
+    if (!Array.isArray(r) || r.length !== 2) continue;
+    o[k] = typeof r[0] === 'number' ? Math.floor(r[0] + Math.random() * (r[1] - r[0] + 1)) : r[Math.random() < 0.5 ? 0 : 1];
+  }
+  return o;
+}
+
+// ---------- 카드 그림: 모델을 편집실에서 직접 찍어 둠 (메모리 + IndexedDB, 모델 파일이 바뀌면 다시) ----------
+const THUMB_V = 3, THUMB_PX = 256, THUMB_OUT = 128;
+let DB = null;
+function idb() {
+  return DB ||= new Promise(res => {
+    try {
+      const r = indexedDB.open('pyle-studio-m3d', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('thumbs');
+      r.onsuccess = () => res(r.result); r.onerror = () => res(null);
+    } catch { res(null); }
+  });
+}
+async function idbGet(k) {
+  const db = await idb(); if (!db) return null;
+  return new Promise(res => { try { const q = db.transaction('thumbs').objectStore('thumbs').get(k); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); } catch { res(null); } });
+}
+async function idbPut(k, v) { const db = await idb(); try { db?.transaction('thumbs', 'readwrite').objectStore('thumbs').put(v, k); } catch { /* 저장 못 해도 괜찮음 */ } }
+async function fileSha(store, path) {
+  const C = cacheFor(store), dir = path.slice(0, path.lastIndexOf('/'));
+  if (!C.dirs.has(dir)) C.dirs.set(dir, store.list(dir).catch(() => []));
+  const f = (await C.dirs.get(dir)).find(x => x.path === path || x.name === path.slice(dir.length + 1));
+  return f ? (f.sha || f.size || '') : '';
+}
+const strHash = s => { let x = 0; for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) | 0; return (x >>> 0).toString(36); };
+let thumbR = null, thumbQ = Promise.resolve(), thumbIdle = 0;
+function thumbOf(store, e, view3d) {
+  const C = cacheFor(store);
+  const key = e.thumb ? `t:${e.thumb}` : `m:${e.model}`;
+  if (!C.thumbs.has(key)) {
+    const p = e.thumb ? store.blobUrl(e.thumb) : (async () => {
+      if (!e.model) return null;
+      const k = `${e.model}|${await fileSha(store, e.model)}|${strHash(JSON.stringify([view3d?.matColor, view3d?.matTint]))}|${THUMB_V}`;
+      const hit = await idbGet(k);
+      if (hit) return hit;
+      const url = await (thumbQ = thumbQ.then(() => shoot(store, e.model, view3d)).catch(() => null));
+      if (url) idbPut(k, url);
+      return url;
+    })();
+    p.catch(() => C.thumbs.delete(key));
+    C.thumbs.set(key, p);
+  }
+  return C.thumbs.get(key);
+}
+async function shoot(store, path, view3d) {
+  const { THREE } = await lib();
+  const tpl = await loadModel(store, path);
+  applyMatColors(THREE, tpl, view3d);
+  clearTimeout(thumbIdle);
+  if (!thumbR) {
+    thumbR = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    thumbR.setPixelRatio(1); thumbR.setSize(THUMB_PX, THUMB_PX, false);
+  }
+  const scene = new THREE.Scene();
+  const sun = new THREE.DirectionalLight(0xfff0dc, 2.6);
+  sun.position.set(-3, 6, 4);
+  scene.add(new THREE.HemisphereLight(0xdfe6f4, 0x6a5a44, 1.5), sun);
+  const obj = tpl.clone(true);
+  scene.add(obj);
+  const box = new THREE.Box3().setFromObject(obj);
+  // 카드에 꽉 차게: 비스듬히 본 모습의 화면 위 크기로 거리를 정함 (키 큰 나무도 작아지지 않게)
+  const center = box.getCenter(new THREE.Vector3());
+  const cam = new THREE.PerspectiveCamera(28, 1, 0.01, 2000);
+  const dir = new THREE.Vector3(0.55, 0.5, 1).normalize();
+  cam.position.copy(center).add(dir);
+  cam.lookAt(center);
+  cam.updateMatrixWorld();
+  const inv = cam.matrixWorldInverse;
+  let ext = 0, depth = 0;
+  for (let i = 0; i < 8; i++) {
+    const c = new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).sub(center);
+    const v = c.clone().add(center).applyMatrix4(inv).sub(center.clone().applyMatrix4(inv));
+    ext = Math.max(ext, Math.abs(v.x), Math.abs(v.y)); depth = Math.max(depth, Math.abs(v.z));
+  }
+  const dist = ext / Math.tan(rad(14)) * 1.08 + depth;
+  cam.position.copy(center).add(dir.multiplyScalar(dist));
+  cam.lookAt(center);
+  thumbR.render(scene, cam);
+  const url = cropAlpha(thumbR.domElement, THUMB_OUT);
+  thumbIdle = setTimeout(() => { thumbR?.dispose(); thumbR?.forceContextLoss(); thumbR = null; }, 4000);   // 다 찍으면 그리기 판 놓기
+  return url;
+}
+
+// 잎 판(투명한 부분)까지 상자에 들어가 나무가 작게 찍히므로, 실제로 그려진 곳만 잘라 카드에 꽉 차게
+function cropAlpha(src, out) {
+  const W = src.width, H = src.height;
+  const a = document.createElement('canvas'); a.width = W; a.height = H;
+  const ax = a.getContext('2d'); ax.drawImage(src, 0, 0);
+  const px = ax.getImageData(0, 0, W, H).data;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (px[(y * W + x) * 4 + 3] > 12) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const o = document.createElement('canvas'); o.width = o.height = out;
+  if (x1 < 0) return o.toDataURL('image/png');
+  const side = Math.max(x1 - x0, y1 - y0) * 1.1 + 2, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  o.getContext('2d').drawImage(a, cx - side / 2, cy - side / 2, side, side, 0, 0, out, out);
+  return o.toDataURL('image/png');
 }
 
 const propsDir = L => (typeof L.props === 'string' && L.props.includes('<') ? L.props.slice(0, L.props.lastIndexOf('/') + 1) : PROPS_DIR);
-const modelPath = (L, o) => propsDir(L) + (o.kind === 'tree' ? `tree_${o.model || 'N3_round3'}.glb` : `${o.kind}.glb`);
+// 라이브러리 카드가 딱 맞으면 그 모델, 아니면 예전 규칙 (<kind>.glb, 나무 tree_<model>.glb)
+function modelPath(L, LB, o) {
+  const e = LB && entryFor(LB, o);
+  if (e?.model && (e.defaults?.model == null || e.defaults.model === o.model)) return e.model;
+  return propsDir(L) + (o.kind === 'tree' ? `tree_${o.model || 'N3_round3'}.glb` : `${o.kind}.glb`);
+}
 const rad = d => d * Math.PI / 180;
 const r3 = v => Math.round(v * 1000) / 1000;
 const pmod = (a, n) => ((a % n) + n) % n;
@@ -104,25 +246,26 @@ function nearCliff(hf, x, y, r, dh) {
   return Math.max(...hs) - Math.min(...hs) > dh;
 }
 
-function warningsFor(L, hf, o) {
+// 경고: 걸을 수 있는 땅 밖, 라이브러리 rules.cliff (r·dh = [기본, 크기마다]) 로 절벽 끝
+function warningsFor(L, hf, o, e) {
   const w = [];
   const [x, y] = o.pos;
   const b = L.bounds;
   if (b && (x < b[0] || y < b[1] || x > b[2] || y > b[3])) w.push('걸을 수 있는 땅 밖이에요');
-  if (o.kind === 'rock') {
-    const r = o.scale || 1;
-    if (nearCliff(hf, x, y, r + 0.8, 0.22 + 0.15 * r)) w.push('절벽·비탈 끝이라 굽기 때 빠져요');
-  } else if (o.kind === 'tree' && !o.big) {
-    if (nearCliff(hf, x, y, 2.8, 0.9)) w.push('절벽 끝(2.8m 안)이라 굽기 때 빠져요');
+  const c = e?.rules?.cliff;
+  if (c && Array.isArray(c.r) && Array.isArray(c.dh) && !(c.skipIf && o[c.skipIf])) {
+    const s = o.scale ?? 1, r = c.r[0] + (c.r[1] || 0) * s;
+    if (nearCliff(hf, x, y, r, c.dh[0] + (c.dh[1] || 0) * s)) w.push(`절벽·비탈 끝(${Math.round(r * 10) / 10}m 안)이라 굽기 때 빠져요`);
   }
   return w;
 }
 
 function nextId(L, kind) {
   let max = 0;
+  const re = new RegExp(`^${kind.replace(/[^\w]/g, '\\$&')}_(\\d+)$`);
   for (const o of L.objects) {
     if (o.id === kind) max = Math.max(max, 1);
-    const m = o.id.match(new RegExp(`^${kind}_(\\d+)$`));
+    const m = o.id.match(re);
     if (m) max = Math.max(max, Number(m[1]));
   }
   return `${kind}_${String(max + 1).padStart(2, '0')}`;
@@ -139,6 +282,8 @@ export function map3dView(ctx, S, { picker }) {
   }
   const L = S.layout;
   const st = S.l3 ||= { sel: null, undo: [], bright: 1.3, shadow: true };
+  st.tab ||= 'lib'; st.cat ||= ALL; st.q ??= ''; st.placing = null;
+  let LB = null;   // 사물 라이브러리 (불러온 뒤)
 
   const stage = h('div', { class: 'm3d-stage' }, h('div', { class: 'm3d-msg' }, '3D 화면 준비 중… (처음엔 모델을 받느라 몇 초 걸려요)'));
   const side = h('div', { class: 'card m3d-side' });
@@ -171,8 +316,10 @@ export function map3dView(ctx, S, { picker }) {
     try {
       if (S.dirty || !S.layoutSha) await save(`3D 배치 확정: ${S.map.name || S.id}`);
       const now = new Date().toISOString();
+      const fresh = [...new Set(L.objects.map(o => o.kind))].filter(k => isNewKind(LB, k));
       const req = { id: `req_bake_${S.id}_${Date.now()}`, room: 'map', team: '맵', mapId: S.id, title: `3D 다시 굽기: ${S.id}`,
-        body: '편집실 3D 배치에서 확정 — 이 배치로 다시 구워 주세요 (D-348 C).', status: '대기', createdAt: now, updatedAt: now, createdBy: '사용자', response: '' };
+        body: '편집실 3D 배치에서 확정 — 이 배치로 다시 구워 주세요 (D-348 C).' + (fresh.length ? ` 굽기 도구에 아직 없는 새 종류: ${fresh.join(', ')} — 굽기 도구에 먼저 넣어 주세요.` : ''),
+        status: '대기', createdAt: now, updatedAt: now, createdBy: '사용자', response: '' };
       await ctx.store.updateJSON(REQUESTS, d => { d.requests ||= []; d.requests.unshift(req); return d; }, `3D 다시 굽기 요청: ${S.id}`, { requests: [] });
       ctx.refreshBadges?.();
       status.textContent = '확정했어요 — 맵 팀이 다시 구워요';
@@ -191,81 +338,185 @@ export function map3dView(ctx, S, { picker }) {
   }
 
   const selObj = () => L.objects.find(o => o.id === st.sel) || null;
-  const warnOf = o => (V ? warningsFor(L, V.hf, o) : []);
+  const entOf = o => (LB ? entryFor(LB, o) : null);
+  const warnOf = o => (V ? warningsFor(L, V.hf, o, entOf(o)) : []);
+  const objName = o => entOf(o)?.name || kindName(LB, o.kind);
+  const clampB = (x, y) => { const b = L.bounds || [-1e9, -1e9, 1e9, 1e9]; return [r3(Math.min(b[2], Math.max(b[0], x))), r3(Math.min(b[3], Math.max(b[1], y)))]; };
+  const narrow = () => window.matchMedia('(max-width:1100px)').matches;   // 휴대폰·태블릿: 라이브러리는 아래에서 올라오는 판
+  const openSheet = on => { side.classList.toggle('open', on); fab.textContent = on ? '✕ 닫기' : '📚 사물 더하기'; };
+  const thumbImg = (e, cls = 'm3d-thumb') => {
+    const box = h('span', { class: cls }, h('span', { class: 'm3d-thumb-ph' }, catIcon(LB, e.category)));
+    thumbOf(ctx.store, e, S.map.view3d).then(url => { if (url) box.replaceChildren(h('img', { src: url, alt: e.name, draggable: 'false' })); }).catch(() => {});
+    return box;
+  };
 
-  // ---------- 왼쪽: 더하기 + 사물 목록 ----------
-  const treeSel = h('select', {}, Object.entries(TREE_MODELS).map(([k, l]) => h('option', { value: k }, l)));
-  const rockSel = h('select', {}, ROCK_SIZES.map(([v, l]) => h('option', { value: v, selected: v === 0.8 }, l)));
-  const listBox = h('div', { class: 'm3d-list' });
-  function addObject(kind) {
-    if (!V) return;
+  // ---------- 놓기: 라이브러리에서 고르고 → 땅을 누르면 놓임 (PC 는 카드를 3D 화면으로 끌어 놓아도 됨) ----------
+  const placeBar = h('div', { class: 'm3d-placebar', hidden: true });
+  const fab = h('button', { class: 'btn m3d-fab', onclick: () => openSheet(!side.classList.contains('open')) }, '📚 사물 더하기');
+  function startPlacing(e, viaDrag) {
+    if (st.sel) select(null);
+    st.placing = { e, o: protoOf(e), viaDrag: !!viaDrag };
+    st.tab = 'lib';
+    if (narrow() && !viaDrag) openSheet(false);
+    V?.setGhost(st.placing.o);
+    drawPlaceBar(); drawLibDetail(); drawGrid();
+  }
+  function stopPlacing() {
+    if (!st.placing) return;
+    st.placing = null;
+    V?.setGhost(null);
+    drawPlaceBar(); drawLibDetail(); drawGrid();
+  }
+  function commitPlace(x, y) {
+    const P = st.placing; if (!P) return;
     pushUndo();
-    const [x, y] = V.viewCenter();
-    const o = { id: nextId(L, kind), kind, pos: [r3(x), r3(y)], rot: 0, scale: 1 };
-    if (kind === 'rock') Object.assign(o, { scale: Number(rockSel.value), sq: 0.75, seed: Math.floor(Math.random() * 200) - 100 });
-    if (kind === 'tree') Object.assign(o, { model: treeSel.value, scale: 1, mirror: Math.random() < 0.5 });
+    const o = structuredClone(P.o);
+    o.id = nextId(L, o.kind);
+    o.pos = clampB(x, y);
     L.objects.push(o);
     st.sel = o.id;
     markDirty();
-    V.syncAll();
-    toast(`${KIND_NAMES[kind]}을(를) 화면 가운데에 놓았어요. 끌어서 옮겨 주세요.`);
+    V?.syncAll();
+    toast(`${P.e.name}을(를) 놓았어요.${st.keepPlacing ? ' 계속 누르면 더 놓여요.' : ''}`);
+    if (st.keepPlacing && !P.viaDrag) { P.o = protoOf(P.e); V?.setGhost(P.o); }
+    else stopPlacing();
+  }
+  function drawPlaceBar() {
+    const P = st.placing;
+    placeBar.hidden = !P;
+    if (!P) return;
+    const keep = h('input', { type: 'checkbox', checked: !!st.keepPlacing });
+    keep.onchange = () => { st.keepPlacing = keep.checked; };
+    fill(placeBar, thumbImg(P.e, 'm3d-thumb sm'),
+      h('span', { class: 'm3d-placetext' }, h('b', {}, P.e.name), ' — 땅을 누르면 놓여요'),
+      h('label', { class: 'row', style: { gap: '4px' } }, keep, '계속 놓기'),
+      h('button', { class: 'btn small', onclick: () => stopPlacing() }, '그만'));
+  }
+
+  // ---------- 왼쪽(휴대폰은 아래 판): 사물 라이브러리 / 놓인 사물 ----------
+  const tabBar = h('div', { class: 'm3d-tabs' });
+  const libBox = h('div', { class: 'm3d-libbox' });
+  const listBox = h('div', { class: 'm3d-list' });
+  const search = h('input', { type: 'search', class: 'm3d-search', placeholder: '🔍 찾기 (예: 나무, 바위)', value: st.q });
+  search.oninput = () => { st.q = search.value; drawGrid(); };
+  const catBar = h('div', { class: 'm3d-cats' });
+  const grid = h('div', { class: 'm3d-grid' });
+  const libDetail = h('div', { class: 'm3d-libdetail' });
+
+  function drawTabs() {
+    const tab = (id, label) => h('button', { class: `m3d-tab ${st.tab === id ? 'on' : ''}`, onclick: () => { st.tab = id; drawSide(); } }, label);
+    fill(tabBar, tab('lib', '📚 사물 라이브러리'), tab('list', `📋 놓인 사물 ${L.objects.length}`),
+      h('button', { class: 'btn small m3d-sheetclose', onclick: () => openSheet(false) }, '✕'));
+  }
+  function drawSide() {
+    drawTabs();
+    libBox.hidden = st.tab !== 'lib';
+    listBox.hidden = st.tab !== 'list';
+    if (st.tab === 'lib') { drawCats(); drawGrid(); drawLibDetail(); } else drawList();
+  }
+  function drawCats() {
+    if (!LB) return fill(catBar);
+    const cats = [ALL, ...new Set([...LB.categories.map(c => c.id), ...LB.items.map(e => e.category || '기타')])]
+      .filter(c => c === ALL || LB.items.some(e => (e.category || '기타') === c));
+    fill(catBar, cats.map(c => h('button', { class: `m3d-cat ${st.cat === c ? 'on' : ''}`, onclick: () => { st.cat = c; drawCats(); drawGrid(); } },
+      c === ALL ? '전체' : `${catIcon(LB, c)} ${c}`)));
+  }
+  function drawGrid() {
+    if (!LB) return fill(grid, h('div', { class: 'muted m3d-empty' }, '사물 라이브러리 불러오는 중…'));
+    if (LB.missing) return fill(grid, h('div', { class: 'muted m3d-empty' }, `사물 라이브러리 파일(${LIB_PATH})이 없어요. 맵 팀에 만들어 달라고 해 주세요.`));
+    const q = st.q.trim().toLowerCase();
+    const items = LB.items.filter(e => (st.cat === ALL || (e.category || '기타') === st.cat)
+      && (!q || [e.name, e.desc, e.category, e.kind, e.id, kindName(LB, e.kind)].some(t => String(t || '').toLowerCase().includes(q))));
+    if (!items.length) return fill(grid, h('div', { class: 'muted m3d-empty' }, '맞는 사물이 없어요.'));
+    fill(grid, items.map(e => {
+      const card = h('button', { class: `m3d-card ${st.placing?.e === e ? 'on' : ''}`, draggable: 'true', title: `${e.name} — ${e.desc || ''}`,
+        onclick: () => (st.placing?.e === e ? stopPlacing() : startPlacing(e)) },
+      thumbImg(e), h('span', { class: 'm3d-cardname' }, e.name),
+      isNewKind(LB, e.kind) ? h('span', { class: 'badge warn m3d-new' }, '새 종류') : null);
+      card.addEventListener('dragstart', ev => {
+        ev.dataTransfer.setData('text/plain', e.id); ev.dataTransfer.effectAllowed = 'copy';
+        startPlacing(e, true);
+      });
+      card.addEventListener('dragend', () => { if (st.placing?.viaDrag) stopPlacing(); });
+      return card;
+    }));
+  }
+  function drawLibDetail() {
+    const e = st.placing?.e;
+    if (!e) {
+      return fill(libDetail, h('div', { class: 'muted' }, '사물을 누른 뒤 3D 화면의 땅을 누르면 그 자리에 놓여요.',
+        narrow() ? null : ' 카드를 3D 화면으로 끌어다 놓아도 돼요.'));
+    }
+    fill(libDetail,
+      h('div', { class: 'm3d-detailhead' }, thumbImg(e, 'm3d-thumb md'),
+        h('div', {}, h('b', {}, e.name), h('div', { class: 'muted', style: { fontSize: '12px' } }, `${catIcon(LB, e.category)} ${e.category || '기타'} · 종류 ${kindName(LB, e.kind)}`))),
+      e.desc ? h('div', { style: { fontSize: '13px', margin: '4px 0' } }, e.desc) : null,
+      isNewKind(LB, e.kind) ? h('div', { class: 'm3d-warn' }, '새 종류 — 맵 팀이 굽기 도구에 추가해야 해요. 놓아 둘 수는 있지만 굽기 전까지 게임에는 안 나와요.') : null,
+      h('div', { class: 'm3d-hint' }, '👇 이제 3D 화면의 땅을 눌러 놓아 주세요.'));
   }
   function drawList() {
+    if (st.tab !== 'list') { drawTabs(); return; }
     const groups = {};
     for (const o of L.objects) (groups[o.kind] ||= []).push(o);
     let warnTotal = 0;
     const rows = Object.entries(groups).map(([kind, list]) => h('div', {},
-      h('div', { class: 'm3d-group' }, `${KIND_ICON[kind] || ''} ${KIND_NAMES[kind] || kind} ${list.length}`),
+      h('div', { class: 'm3d-group' }, `${catIcon(LB, entOf(list[0])?.category)} ${kindName(LB, kind)} ${list.length}`, isNewKind(LB, kind) ? ' · 새 종류' : ''),
       list.map(o => {
         const w = warnOf(o); warnTotal += w.length ? 1 : 0;
-        return h('button', { class: `pal ${o.id === st.sel ? 'on' : ''}`, title: w.join(' / '), onclick: () => { select(o.id); V?.focus(o); } },
-          h('span', {}, o.id), o.kind === 'tree' && h('span', { class: 'muted', style: { fontSize: '12px' } }, TREE_MODELS[o.model] || o.model),
+        const e = entOf(o);
+        return h('button', { class: `pal ${o.id === st.sel ? 'on' : ''}`, title: w.join(' / '), onclick: () => { select(o.id); V?.focus(o); if (narrow()) openSheet(false); } },
+          h('span', {}, o.id), e && e.name !== kindName(LB, kind) && h('span', { class: 'muted', style: { fontSize: '12px' } }, e.name),
           w.length ? h('span', { class: 'badge warn', style: { marginLeft: 'auto' } }, '⚠') : null);
       })));
+    drawTabs();
     fill(listBox, warnTotal ? h('div', { class: 'm3d-warnsum' }, `⚠ 주의 ${warnTotal}개 — 굽기 때 빠질 수 있어요`) : null, rows);
   }
-  fill(side,
-    h('h4', { style: { marginTop: 0 } }, '➕ 더하기'),
-    h('div', { class: 'm3d-add' },
-      ['cabin', 'lumber', 'workbench', 'sawhorse'].map(k => h('button', { class: 'btn small', onclick: () => addObject(k) }, `${KIND_ICON[k]} ${KIND_NAMES[k]}`))),
-    h('div', { class: 'm3d-addrow' }, treeSel, h('button', { class: 'btn small', onclick: () => addObject('tree') }, '🌳 나무 더하기')),
-    h('div', { class: 'm3d-addrow' }, rockSel, h('button', { class: 'btn small', onclick: () => addObject('rock') }, '🪨 바위 더하기')),
-    h('p', { class: 'muted', style: { fontSize: '12px', margin: '4px 0 0' } }, '새 사물은 지금 보는 화면 가운데에 놓여요.'),
-    h('h4', {}, '놓인 사물'), listBox);
+  fill(libBox, search, catBar, grid, libDetail);
+  fill(side, tabBar, libBox, listBox);
 
   // ---------- 오른쪽: 고른 사물 정보 ----------
   function drawProps() {
     const o = selObj();
     if (!o) {
       fill(props, h('h4', { style: { marginTop: 0 } }, '사물 고르기'),
-        h('p', { class: 'muted', style: { fontSize: '13px' } }, '3D 화면에서 사물을 누르면 골라져요. 고른 채로 끌면 옮겨지고, 빈 곳을 끌면 화면이 돌아가요.'),
+        h('p', { class: 'muted', style: { fontSize: '13px' } }, '3D 화면에서 사물을 누르면 골라져요. 고른 채로 끌면 옮겨지고, 빈 곳을 끌면 화면이 돌아가요. 새 사물은 왼쪽 "사물 라이브러리"에서 골라요.'),
         h('ul', { class: 'm3d-help' },
           h('li', {}, '마우스: 왼쪽 끌기 = 돌려 보기, 오른쪽 끌기 = 옮겨 보기, 휠 = 가깝게/멀게'),
           h('li', {}, '휴대폰: 한 손가락 = 돌려 보기·사물 끌기, 두 손가락 = 가깝게/멀게·옮겨 보기'),
-          h('li', {}, '키보드: Delete = 지우기, Ctrl+Z = 되돌리기, Q/E = 15° 돌리기')));
+          h('li', {}, '키보드: Delete = 지우기, Ctrl+Z = 되돌리기, Q/E = 15° 돌리기, Esc = 놓기 그만')));
       return;
     }
     const w = warnOf(o);
+    const e = entOf(o);
     const num = (val, step, onset) => {
       const i = h('input', { type: 'number', step, value: r3(val), class: 'num' });
       i.onchange = () => { const v = Number(i.value); if (!isNaN(v)) { pushUndo(); onset(v); markDirty(); V?.syncOne(o); } };
       return i;
     };
-    const [smin, smax, sstep] = SCALE_RANGE[o.kind] || SCALE_RANGE.default;
-    const scVal = h('b', {}, r3(o.scale ?? 1));
-    const sc = h('input', { type: 'range', min: smin, max: smax, step: sstep, value: o.scale ?? 1 });
+    let [smin, smax, sstep] = e?.rules?.scale || SCALE_DEF;
+    const sv = o.scale ?? 1;
+    smin = Math.min(smin, sv); smax = Math.max(smax, sv);
+    const scVal = h('b', {}, r3(sv));
+    const sc = h('input', { type: 'range', min: smin, max: smax, step: sstep, value: sv });
     sc.onpointerdown = () => pushUndo();
     sc.onkeydown = () => pushUndo();
     sc.oninput = () => { o.scale = Number(sc.value); scVal.textContent = r3(o.scale); markDirty(); V?.syncOne(o, true); };
     sc.onchange = () => V?.syncOne(o);
     const rotBtn = d => h('button', { class: 'btn small', onclick: () => rotate(d) }, d > 0 ? '⟲ 15°' : '⟳ 15°');
     const extra = [];
-    if (o.kind === 'tree') {
-      const ms = h('select', {}, Object.entries(TREE_MODELS).map(([k, l]) => h('option', { value: k, selected: k === o.model }, l)));
+    // 같은 종류에 모양(model)이 여럿이면 모양 고르기 (나무 등)
+    const shapes = (LB?.items || []).filter(x => x.kind === o.kind && x.defaults?.model != null);
+    if (shapes.length > 1 || (o.model != null && shapes.length)) {
+      const opts = shapes.map(x => h('option', { value: x.defaults.model, selected: x.defaults.model === o.model }, x.name));
+      if (!shapes.some(x => x.defaults.model === o.model)) opts.unshift(h('option', { value: o.model ?? '', selected: true }, o.model ?? '(없음)'));
+      const ms = h('select', {}, opts);
       ms.onchange = () => { pushUndo(); o.model = ms.value; markDirty(); V?.syncOne(o); drawList(); };
+      extra.push(h('label', { class: 'field' }, h('span', {}, `${kindName(LB, o.kind)} 모양`), ms));
+    }
+    if ('mirror' in o || e?.random?.mirror) {
       const mir = h('input', { type: 'checkbox', checked: !!o.mirror });
       mir.onchange = () => { pushUndo(); o.mirror = mir.checked; markDirty(); V?.syncOne(o); };
-      extra.push(h('label', { class: 'field' }, h('span', {}, '나무 모양'), ms), h('label', { class: 'row' }, mir, '좌우 뒤집기'));
+      extra.push(h('label', { class: 'row' }, mir, '좌우 뒤집기'));
     }
     if (o.kind === 'rock') {
       const sqVal = h('b', {}, r3(o.sq ?? 0.75));
@@ -279,14 +530,16 @@ export function map3dView(ctx, S, { picker }) {
         h('div', { class: 'muted', style: { fontSize: '12px' } }, '미리보기 바위 모양은 하나뿐이에요. 실제 모양은 굽기 때 번호대로 만들어져요.'));
     }
     fill(props,
-      h('h4', { style: { marginTop: 0 } }, `${KIND_ICON[o.kind] || ''} ${KIND_NAMES[o.kind] || o.kind}`),
+      h('div', { class: 'm3d-detailhead' }, e ? thumbImg(e, 'm3d-thumb md') : null, h('h4', { style: { margin: 0 } }, objName(o))),
+      isNewKind(LB, o.kind) ? h('div', { class: 'm3d-warn' }, '새 종류 — 맵 팀이 굽기 도구에 추가해야 해요.') : null,
       w.length ? h('div', { class: 'm3d-warn' }, w.map(t => h('div', {}, `⚠ ${t}`))) : null,
-      h('div', { class: 'm3d-kv' }, h('span', {}, '종류'), h('b', {}, KIND_NAMES[o.kind] || o.kind), h('span', {}, '이름'), h('code', {}, o.id)),
+      h('div', { class: 'm3d-kv' }, h('span', {}, '종류'), h('b', {}, kindName(LB, o.kind)), h('span', {}, '이름'), h('code', {}, o.id)),
+      e?.desc ? h('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '6px' } }, e.desc) : null,
       h('div', { class: 'field' }, h('span', {}, '위치 (m) — 가로 x · 안쪽 y (사람 키 ≈ 1.7m)'),
         h('div', { class: 'row' }, num(Math.round(o.pos[0] * 10) / 10, 0.1, v => { o.pos[0] = v; }), num(Math.round(o.pos[1] * 10) / 10, 0.1, v => { o.pos[1] = v; }))),
       h('div', { class: 'field' }, h('span', {}, '회전 (도)'),
         h('div', { class: 'row' }, rotBtn(15), rotBtn(-15), num(Math.round(o.rot || 0), 1, v => { o.rot = Math.round(v); }))),
-      h('label', { class: 'field' }, h('span', {}, o.kind === 'rock' ? '크기 (반지름 m) ' : '크기 (배) '), h('div', { class: 'row' }, sc, scVal)),
+      h('label', { class: 'field' }, h('span', {}, `${e?.rules?.scaleLabel || '크기 (배)'} `), h('div', { class: 'row' }, sc, scVal)),
       extra,
       h('div', { class: 'row', style: { marginTop: '10px' } },
         h('button', { class: 'btn small danger', onclick: () => remove() }, '🗑 지우기'),
@@ -318,15 +571,17 @@ export function map3dView(ctx, S, { picker }) {
   const viewBtns = h('span', { class: 'row', style: { gap: '4px' } },
     h('button', { class: 'btn small', onclick: () => V?.camera(VIEW_CAM) }, '🗺 전체 보기'),
     h('button', { class: 'btn small', onclick: () => V?.camera(GAME_CAM, true) }, '🎮 게임 화면처럼'));
-  drawList(); drawProps();
+  drawSide(); drawProps();
 
-  // 3D 준비 (비동기)
+  // 라이브러리 먼저, 그다음 3D 준비 (비동기)
+  const libReady = loadLibrary(ctx.store).then(x => { LB = x; drawSide(); drawProps(); return x; });
   init().catch(e => { console.error(e); fill(stage, h('div', { class: 'm3d-msg err' }, `3D 화면을 열지 못했어요: ${e.message}`)); });
 
   async function init() {
     const { THREE, OrbitControls } = await lib();
+    await libReady;
     const terrainPath = L.terrain || `${PROPS_DIR}terrain_${S.id}.glb`;
-    const kinds = new Set(L.objects.map(o => modelPath(L, o)));
+    const kinds = new Set(L.objects.map(o => modelPath(L, LB, o)));
     const [terrainTpl] = await Promise.all([loadModel(ctx.store, terrainPath), ...[...kinds].map(p => loadModel(ctx.store, p).catch(() => null))]);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -369,6 +624,7 @@ export function map3dView(ctx, S, { picker }) {
     scene.add(selBox);
     const warnMat = new THREE.MeshBasicMaterial({ color: 0xe0442c, transparent: true, opacity: 0.85, depthTest: false, side: THREE.DoubleSide });
     const warnGeo = new THREE.RingGeometry(0.85, 1, 40).rotateX(-Math.PI / 2);
+    const spotMat = new THREE.MeshBasicMaterial({ color: 0x5fe08a, transparent: true, opacity: 0.9, depthTest: false, side: THREE.DoubleSide });
 
     function place(o, node) {
       const [x, y] = o.pos;
@@ -383,26 +639,37 @@ export function map3dView(ctx, S, { picker }) {
       } else if (o.kind === 'tree') {
         node.scale.set(o.mirror ? -s : s, s, s);
         node.position.y = g - 0.1;
-      } else node.scale.setScalar(s);
-      const w = warningsFor(L, hf, o);
+      } else node.scale.set(o.mirror ? -s : s, s, s);
+      const w = warningsFor(L, hf, o, entOf(o));
       const ring = node.userData.ring;
       ring.visible = w.length > 0;
-      const rr = o.kind === 'tree' ? 1.6 : o.kind === 'rock' ? s * 1.3 : 2;
+      const rr = o.kind === 'tree' ? 1.6 : o.kind === 'rock' ? s * 1.3 : (entOf(o)?.rules?.ring ?? 2);
       ring.scale.set(rr / Math.abs(node.scale.x), 1 / node.scale.y, rr / node.scale.z);
       ring.position.y = 0.15 / node.scale.y;
+      const spot = node.userData.spot;
+      if (spot) { spot.visible = !ring.visible; spot.scale.copy(ring.scale); spot.position.copy(ring.position); }
     }
-    async function build(o) {
-      const key = modelPath(L, o);
+    // ghost=true: 놓기 전 반투명 미리보기 (누를 수 없음, 그림자 없음)
+    async function build(o, ghost) {
+      const key = modelPath(L, LB, o);
       const tpl = await loadModel(ctx.store, key).catch(() => null);
       const node = new THREE.Group();
-      node.userData.oid = o.id;
+      if (!ghost) node.userData.oid = o.id;
       if (tpl) {
         applyMatColors(THREE, tpl, S.map.view3d);
         const m = tpl.clone(true);
-        m.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+        m.traverse(c => {
+          if (!c.isMesh) return;
+          if (ghost) {
+            const see = mm => { const k = mm.clone(); k.transparent = true; k.opacity = 0.6; k.depthWrite = false; return k; };
+            c.material = Array.isArray(c.material) ? c.material.map(see) : see(c.material);
+            c.raycast = () => {};
+          } else { c.castShadow = true; c.receiveShadow = true; }
+        });
         node.add(m);
       } else {
-        const b = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), new THREE.MeshStandardMaterial({ color: 0xff00ff }));
+        const b = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), new THREE.MeshStandardMaterial({ color: 0xff00ff, transparent: !!ghost, opacity: ghost ? 0.6 : 1 }));
+        if (ghost) b.raycast = () => {};
         node.add(b);
       }
       const ring = new THREE.Mesh(warnGeo, warnMat);
@@ -410,6 +677,12 @@ export function map3dView(ctx, S, { picker }) {
       ring.raycast = () => {};
       node.userData.ring = ring;
       node.add(ring);
+      if (ghost) {   // 놓을 자리 표시: 괜찮으면 초록 고리 (경고면 빨간 고리만)
+        const spot = new THREE.Mesh(warnGeo, spotMat);
+        spot.renderOrder = 9; spot.raycast = () => {};
+        node.userData.spot = spot;
+        node.add(spot);
+      }
       return { node, key };
     }
     // 목록과 3D 장면 맞추기
@@ -420,7 +693,7 @@ export function map3dView(ctx, S, { picker }) {
         for (const [id, n] of nodes) if (!ids.has(id)) { objRoot.remove(n.node); nodes.delete(id); }
         for (const o of L.objects) {
           let n = nodes.get(o.id);
-          if (n && n.key !== modelPath(L, o)) { objRoot.remove(n.node); nodes.delete(o.id); n = null; }
+          if (n && n.key !== modelPath(L, LB, o)) { objRoot.remove(n.node); nodes.delete(o.id); n = null; }
           if (!n) { n = await build(o); nodes.set(o.id, n); objRoot.add(n.node); }
           place(o, n.node);
         }
@@ -433,7 +706,7 @@ export function map3dView(ctx, S, { picker }) {
     // quick=true: 끄는 중 (목록·정보는 다시 안 그림)
     function syncOne(o, quick) {
       const n = nodes.get(o.id);
-      if (!n || n.key !== modelPath(L, o)) return syncAll();
+      if (!n || n.key !== modelPath(L, LB, o)) return syncAll();
       place(o, n.node);
       highlight();
       if (!quick) { drawList(); drawProps(); }
@@ -458,6 +731,28 @@ export function map3dView(ctx, S, { picker }) {
       scene.traverse(m => { if (m.material) [].concat(m.material).forEach(mm => { mm.needsUpdate = true; }); });
       request();
     }
+
+    // 놓기 전 미리보기 (마우스를 따라다님, 절벽 끝이면 빨간 고리)
+    let ghost = null, ghostFor = null;
+    async function setGhost(o) {
+      ghostFor = o;
+      if (ghost) { scene.remove(ghost.node); ghost = null; request(); }
+      if (!o) return;
+      const g = await build(o, true);
+      if (ghostFor !== o) return;
+      ghost = g; g.node.visible = false;
+      scene.add(g.node);
+    }
+    function moveGhost(ndc) {
+      if (!ghost || !st.placing || ghostFor !== st.placing.o) return;
+      const p = groundHit(ndc);
+      if (!p) { ghost.node.visible = false; request(); return; }
+      ghostFor.pos = clampB(p.x, -p.z);
+      place(ghostFor, ghost.node);
+      ghost.node.visible = true;
+      request();
+    }
+    const hideGhost = () => { if (ghost?.node.visible) { ghost.node.visible = false; request(); } };
 
     // 카메라: 남쪽(화면 아래)에서 tilt 만큼 내려다봄
     const controls = new OrbitControls(cam, canvas);
@@ -484,7 +779,7 @@ export function map3dView(ctx, S, { picker }) {
       request();
     }
 
-    // 화면 가운데가 가리키는 땅 (새 사물 놓을 자리) — 블렌더 (x, y)
+    // 화면 한 점이 가리키는 땅 (three.js 좌표)
     const ray = new THREE.Raycaster();
     function groundHit(ndc) {
       ray.setFromCamera(ndc, cam);
@@ -495,8 +790,7 @@ export function map3dView(ctx, S, { picker }) {
     }
     function viewCenter() {
       const p = groundHit(new THREE.Vector2(0, 0)) || controls.target;
-      const b = L.bounds || [-1e9, -1e9, 1e9, 1e9];
-      return [Math.min(b[2], Math.max(b[0], p.x)), Math.min(b[3], Math.max(b[1], -p.z))];
+      return clampB(p.x, -p.z);
     }
 
     // ---------- 누르기·끌기 ----------
@@ -511,13 +805,13 @@ export function map3dView(ctx, S, { picker }) {
       return null;
     };
     let drag = null, down = null, touches = 0;
-    // OrbitControls 보다 먼저 듣기 (사물을 잡으면 화면 돌리기를 잠깐 끔)
+    // OrbitControls 보다 먼저 듣기 (사물을 잡으면 화면 돌리기를 잠깐 끔). 놓는 중에는 사물을 잡지 않고 땅을 누르면 놓임
     canvas.addEventListener('pointerdown', e => {
       touches++;
       canvas.focus({ preventScroll: true });
       down = { x: e.clientX, y: e.clientY, hit: null };
       if (touches > 1) { if (drag) endDrag(); return; }
-      if (e.button !== 0) return;
+      if (e.button !== 0 || st.placing) return;
       const id = pickAt(ndcOf(e));
       down.hit = id;
       if (id) {
@@ -530,6 +824,7 @@ export function map3dView(ctx, S, { picker }) {
       }
     }, true);
     canvas.addEventListener('pointermove', e => {
+      if (st.placing && !drag && e.pointerType === 'mouse') moveGhost(ndcOf(e));
       if (!drag || e.pointerId !== drag.pid) return;
       const p = groundHit(ndcOf(e));
       if (!p) return;
@@ -537,11 +832,11 @@ export function map3dView(ctx, S, { picker }) {
         if (Math.hypot(e.clientX - down.x, e.clientY - down.y) < 4) return;
         pushUndo(); drag.moved = true;
       }
-      const b = L.bounds || [-1e9, -1e9, 1e9, 1e9];
-      drag.o.pos = [r3(Math.min(b[2], Math.max(b[0], p.x + drag.off[0]))), r3(Math.min(b[3], Math.max(b[1], -p.z + drag.off[1])))];
+      drag.o.pos = clampB(p.x + drag.off[0], -p.z + drag.off[1]);
       markDirty();
       syncOne(drag.o, true);
     });
+    canvas.addEventListener('pointerleave', hideGhost);
     function endDrag() {
       if (!drag) return;
       const d = drag; drag = null;
@@ -550,19 +845,32 @@ export function map3dView(ctx, S, { picker }) {
     }
     const up = e => {
       touches = Math.max(0, touches - 1);
+      const tap = down && e.type === 'pointerup' && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 6 && touches === 0;
       if (drag && e.pointerId === drag.pid) endDrag();
-      else if (down && !down.hit && e.type === 'pointerup' && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 5 && touches === 0 && st.sel) select(null);
+      else if (tap && st.placing && e.button === 0) {
+        const p = groundHit(ndcOf(e));
+        if (p) commitPlace(p.x, -p.z);
+      } else if (tap && !down.hit && st.sel) select(null);
       if (touches === 0) { controls.enabled = true; down = null; }
     };
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', up);
+    // PC: 라이브러리 카드를 끌어다 놓기
+    canvas.addEventListener('dragover', e => { if (!st.placing) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; moveGhost(ndcOf(e)); });
+    canvas.addEventListener('dragleave', hideGhost);
+    canvas.addEventListener('drop', e => {
+      if (!st.placing) return;
+      e.preventDefault();
+      const p = groundHit(ndcOf(e));
+      if (p) commitPlace(p.x, -p.z); else stopPlacing();
+    });
     const onKey = e => {
       if (!canvas.isConnected || e.target.closest?.('input, select, textarea')) return;
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); remove(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
       else if (e.key === 'q' || e.key === 'Q') rotate(15);
       else if (e.key === 'e' || e.key === 'E') rotate(-15);
-      else if (e.key === 'Escape') select(null);
+      else if (e.key === 'Escape') { if (st.placing) stopPlacing(); else select(null); }
     };
     window.addEventListener('keydown', onKey);
 
@@ -598,7 +906,7 @@ export function map3dView(ctx, S, { picker }) {
       if (V === api) V = null;
     }
 
-    const api = { hf, syncAll, syncOne, highlight, light, camera, focus, viewCenter, request, scene, cam, nodes };
+    const api = { hf, syncAll, syncOne, highlight, light, camera, focus, viewCenter, request, setGhost, scene, cam, nodes };
     // 시험·디버그용: 블렌더 좌표 → 화면 좌표 (px, 캔버스 기준)
     api.toScreen = (x, y, up = 0.5) => {
       const v = new THREE.Vector3(x, groundB(hf, x, y) + up, -y).project(cam);
@@ -607,7 +915,7 @@ export function map3dView(ctx, S, { picker }) {
     };
     V = api;
     root.m3d = api;
-    stage.replaceChildren(canvas);
+    stage.replaceChildren(canvas, placeBar, fab);
     ro.observe(stage);
     camera(S.l3cam || VIEW_CAM);
     light();
